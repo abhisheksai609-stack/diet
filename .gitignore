@@ -1,0 +1,11 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.kotlin/
+
+# The shared debug keystore is committed on purpose (see app/build.gradle.kts)
+!app/debug.keystore

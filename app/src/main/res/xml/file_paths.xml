@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Camera app writes the fresh photo here before we shrink and store it -->
+    <cache-path
+        name="captures"
+        path="captures/" />
+</paths>
