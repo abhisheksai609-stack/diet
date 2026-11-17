@@ -1,7 +1,8 @@
 package com.mealsnap.data
 
 import android.content.Context
-import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -27,17 +28,22 @@ class SettingsRepository(private val context: Context) {
         val apiKey = stringPreferencesKey("anthropic_api_key")
         val dailyGoal = intPreferencesKey("daily_goal_kcal")
         val model = stringPreferencesKey("model")
+        val autoLog = booleanPreferencesKey("auto_log")
     }
 
     val apiKey: Flow<String> = context.settingsStore.data.map { it[Keys.apiKey].orEmpty() }
     val dailyGoal: Flow<Int> = context.settingsStore.data.map { it[Keys.dailyGoal] ?: DEFAULT_GOAL }
     val model: Flow<AiModel> = context.settingsStore.data.map { AiModel.fromId(it[Keys.model]) }
 
-    suspend fun save(apiKey: String, dailyGoal: Int, model: AiModel) {
-        context.settingsStore.edit { prefs: androidx.datastore.preferences.core.MutablePreferences ->
+    /** When on (default), a meal is saved to the log as soon as the AI has identified it. */
+    val autoLog: Flow<Boolean> = context.settingsStore.data.map { it[Keys.autoLog] ?: true }
+
+    suspend fun save(apiKey: String, dailyGoal: Int, model: AiModel, autoLog: Boolean) {
+        context.settingsStore.edit { prefs: MutablePreferences ->
             prefs[Keys.apiKey] = apiKey.trim()
             prefs[Keys.dailyGoal] = dailyGoal.coerceIn(500, 10_000)
             prefs[Keys.model] = model.id
+            prefs[Keys.autoLog] = autoLog
         }
     }
 

@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.flow
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.roundToInt
+
+data class MacroTargets(val proteinG: Int, val carbsG: Int, val fatG: Int)
 
 data class DaySummary(val date: LocalDate, val meals: List<Meal>) {
     val calories: Int get() = meals.sumOf { it.calories }
@@ -46,6 +49,23 @@ object DayStats {
             delay(30_000)
         }
     }.distinctUntilChanged()
+
+    /** Average calories over the days in [chart] that have something logged. */
+    fun weeklyAverage(chart: List<Pair<LocalDate, Int>>): Int {
+        val logged = chart.map { it.second }.filter { it > 0 }
+        return if (logged.isEmpty()) 0 else logged.average().roundToInt()
+    }
+
+    /** Number of days in [chart] with food logged that finished at or under [goal]. */
+    fun daysOnTarget(chart: List<Pair<LocalDate, Int>>, goal: Int): Int =
+        chart.count { it.second in 1..goal }
+
+    /** Daily macro targets derived from the calorie goal (25% protein, 45% carbs, 30% fat). */
+    fun macroTargets(goalKcal: Int): MacroTargets = MacroTargets(
+        proteinG = (goalKcal * 0.25 / 4).roundToInt(),
+        carbsG = (goalKcal * 0.45 / 4).roundToInt(),
+        fatG = (goalKcal * 0.30 / 9).roundToInt(),
+    )
 
     fun progress(consumed: Int, goal: Int): Float =
         if (goal <= 0) 0f else (consumed.toFloat() / goal).coerceIn(0f, 1f)

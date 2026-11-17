@@ -1,11 +1,13 @@
 package com.mealsnap.ai
 
 import android.util.Base64
+import com.anthropic.client.AnthropicClient
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.anthropic.core.JsonValue
 import com.anthropic.errors.AnthropicIoException
 import com.anthropic.errors.AnthropicServiceException
 import com.anthropic.errors.BadRequestException
+import com.anthropic.errors.NotFoundException
 import com.anthropic.errors.PermissionDeniedException
 import com.anthropic.errors.RateLimitException
 import com.anthropic.errors.UnauthorizedException
@@ -27,7 +29,8 @@ import java.time.Duration
 class AnalysisException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
- * Sends a meal photo to Claude and returns a structured calorie / macro estimate.
+ * Sends a meal photo to Claude and returns a structured, detailed nutrition estimate: the dish
+ * name, every item with its portion and macros, totals, and the visual cues it relied on.
  *
  * Uses the official Anthropic Java SDK. Structured outputs guarantee the reply matches
  * [SCHEMA], and the server-side refusal fallback is switched on so a (very unlikely) safety
@@ -41,16 +44,11 @@ class FoodAnalyzer {
         jpeg: ByteArray,
         hint: String = "",
     ): FoodAnalysis = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) throw AnalysisException("Add your Anthropic API key in Settings first.")
-
+        requireKey(apiKey)
         val params = buildParams(modelId, Base64.encodeToString(jpeg, Base64.NO_WRAP), hint)
 
-        try {
-            val client = AnthropicOkHttpClient.builder()
-                .apiKey(apiKey.trim())
-                .timeout(Duration.ofSeconds(120))
-                .maxRetries(2)
-                .build()
+        guarded {
+            val client = newClient(apiKey, timeout = Duration.ofSeconds(120), retries = 2)
             val message = try {
                 client.beta().messages().create(params)
             } finally {
@@ -58,27 +56,64 @@ class FoodAnalyzer {
             }
 
             if (message.stopReason().orElse(null) == BetaStopReason.REFUSAL) {
-                throw AnalysisException("The AI declined to analyse this photo. You can enter the calories manually.")
+                throw AnalysisException("The AI declined to analyse this photo. You can enter the details manually.")
             }
             if (message.stopReason().orElse(null) == BetaStopReason.MAX_TOKENS) {
-                throw AnalysisException("The estimate was cut off. Try again, or enter the calories manually.")
+                throw AnalysisException("The estimate was cut off. Try again, or enter the details manually.")
             }
 
             val text = message.content().mapNotNull { it.text().orElse(null)?.text() }.joinToString("")
             if (text.isBlank()) throw AnalysisException("The AI returned an empty answer. Please try again.")
             FoodAnalysisParser.parse(text)
+        }
+    }
+
+    /**
+     * Cheap check that [apiKey] works and can use [modelId] (a metadata lookup, no tokens billed).
+     * Throws [AnalysisException] with a user-facing reason when it doesn't.
+     */
+    suspend fun verifyKey(apiKey: String, modelId: String) = withContext(Dispatchers.IO) {
+        requireKey(apiKey)
+        guarded {
+            val client = newClient(apiKey, timeout = Duration.ofSeconds(20), retries = 1)
+            try {
+                client.models().retrieve(modelId)
+            } finally {
+                client.close()
+            }
+            Unit
+        }
+    }
+
+    private fun requireKey(apiKey: String) {
+        if (apiKey.isBlank()) throw AnalysisException("Add your Anthropic API key in Settings first.")
+    }
+
+    private fun newClient(apiKey: String, timeout: Duration, retries: Int): AnthropicClient =
+        AnthropicOkHttpClient.builder()
+            .apiKey(apiKey.trim())
+            .timeout(timeout)
+            .maxRetries(retries)
+            .build()
+
+    /** Runs [block], turning SDK and parsing failures into messages a person can act on. */
+    private inline fun <T> guarded(block: () -> T): T {
+        try {
+            return block()
         } catch (e: CancellationException) {
             throw e
         } catch (e: AnalysisException) {
             throw e
         } catch (e: UnauthorizedException) {
-            throw AnalysisException("Your API key was rejected. Check it in Settings.", e)
+            throw AnalysisException("That API key was rejected. Check that you copied the whole key.", e)
         } catch (e: PermissionDeniedException) {
             throw AnalysisException("This API key isn't allowed to use that model. Check your Anthropic account.", e)
+        } catch (e: NotFoundException) {
+            throw AnalysisException("That model isn't available to this key. Pick another model in Settings.", e)
         } catch (e: RateLimitException) {
             throw AnalysisException("Too many requests right now. Wait a moment and try again.", e)
         } catch (e: BadRequestException) {
-            throw AnalysisException("The request was rejected: ${e.message ?: "bad request"}", e)
+            throw AnalysisException("The request was rejected: ${e.message ?: "bad request"}. If it mentions credits, add some in the Anthropic Console.", e)
         } catch (e: AnthropicServiceException) {
             throw AnalysisException("The AI service had a problem (HTTP ${e.statusCode()}). Please try again.", e)
         } catch (e: AnthropicIoException) {
@@ -103,7 +138,7 @@ class FoodAnalyzer {
                 .build()
 
             val question = buildString {
-                append("Estimate the calories and macros of the food in this photo.")
+                append("Identify the food in this photo and log it in detail.")
                 if (hint.isNotBlank()) {
                     append("\n\nThe person says: \"").append(hint.trim()).append("\"")
                     append("\nTreat that as ground truth where it conflicts with what you see.")
@@ -139,51 +174,65 @@ class FoodAnalyzer {
                 .build()
         }
 
-        private const val SYSTEM_PROMPT ="""You are the nutrition estimator inside a personal calorie-tracking app. The user photographs their food just before eating it, and you estimate what is on the plate.
+        private const val SYSTEM_PROMPT = """You are the food recognition and nutrition engine inside a personal calorie-tracking app. The user takes a photo of their food just before eating it, and everything you return is logged automatically with no human review, so be specific and careful.
 
-How to estimate:
-- Identify every distinct food and drink item you can see.
-- Judge portion sizes from visual cues: plate or bowl size, cutlery, cups, packaging, hands, and how full the plate is.
-- Estimate calories (kcal) for the portion shown, not for a standard serving. Include visible cooking fats, sauces and dressings.
-- Give protein, carbohydrate and fat in grams for the whole meal.
-- Give one central, realistic estimate, not a range. Round calories to the nearest 5 and grams to whole numbers.
-- total_calories must equal the sum of the item calories.
-- meal_name is a short, natural name such as "Chicken burrito bowl".
-- confidence is "high" for simple, clearly visible foods, "medium" when portions or ingredients are uncertain, and "low" when much is hidden or unclear.
-- notes is one short sentence stating the main assumption (for example "Assumed about 1 tbsp of olive oil on the salad").
-- If the image contains no food or drink, set is_food to false, meal_name to an empty string, items to an empty list and every number to 0.
-- If the user adds a description, treat it as ground truth over what you infer from the image."""
+Identify:
+- dish_name: the specific name of the dish or meal as a person would say it, e.g. "Chicken tikka masala with basmati rice" or "Avocado toast with poached egg". Not a generic word like "food" or "lunch". For a plate with several dishes, name the overall meal.
+- cuisine: the cuisine or style if clear (e.g. "Indian", "Italian", "Fast food"), otherwise an empty string.
+- items: every distinct food and drink you can see, including sauces, dressings, sides and beverages. For each give a short name, a portion with your best amount estimate ("about 150 g", "1 medium bowl, ~300 ml", "2 slices"), its calories, and its protein, carbohydrate and fat in grams.
+
+Estimate portions from visual cues: plate, bowl or cup size, cutlery and hands for scale, packaging, thickness and spread of the food, and how full the plate is. Estimate the portion actually shown, not a standard serving. Account for visible cooking oil, butter, cheese and sauces. If a package, menu item or nutrition label is legible, use its figures.
+
+Totals:
+- total_calories, protein_g, carbs_g and fat_g are for the whole photo and must equal the sum of the items. Use one central, realistic estimate, not a range. Round calories to the nearest 5 and grams to whole numbers.
+- fiber_g, sugar_g and sodium_mg (milligrams) are your best estimates for the whole photo.
+
+Explain:
+- visual_cues: 2 to 5 short phrases naming what you saw that drove the identification and the portion sizes (for example "Standard dinner plate, about 26 cm", "Fork for scale", "Glossy sauce suggests added oil").
+- confidence: "high" for clearly visible, simple foods; "medium" when portions or ingredients are uncertain; "low" when much is hidden or unclear.
+- notes: one short sentence stating the main assumption.
+
+If the image contains no food or drink, set is_food to false, dish_name and cuisine to empty strings, items and visual_cues to empty lists and every number to 0.
+If the user adds a description, treat it as ground truth over what you infer from the image."""
 
         private val INT = mapOf("type" to "integer")
         private val STRING = mapOf("type" to "string")
+
+        private val ITEM = mapOf(
+            "type" to "object",
+            "additionalProperties" to false,
+            "required" to listOf("name", "portion", "calories", "protein_g", "carbs_g", "fat_g"),
+            "properties" to mapOf(
+                "name" to STRING,
+                "portion" to STRING,
+                "calories" to INT,
+                "protein_g" to INT,
+                "carbs_g" to INT,
+                "fat_g" to INT,
+            ),
+        )
 
         private val SCHEMA: Map<String, Any> = mapOf(
             "type" to "object",
             "additionalProperties" to false,
             "required" to listOf(
-                "is_food", "meal_name", "items", "total_calories",
-                "protein_g", "carbs_g", "fat_g", "confidence", "notes",
+                "is_food", "dish_name", "cuisine", "items", "total_calories",
+                "protein_g", "carbs_g", "fat_g", "fiber_g", "sugar_g", "sodium_mg",
+                "visual_cues", "confidence", "notes",
             ),
             "properties" to mapOf(
                 "is_food" to mapOf("type" to "boolean"),
-                "meal_name" to STRING,
-                "items" to mapOf(
-                    "type" to "array",
-                    "items" to mapOf(
-                        "type" to "object",
-                        "additionalProperties" to false,
-                        "required" to listOf("name", "portion", "calories"),
-                        "properties" to mapOf(
-                            "name" to STRING,
-                            "portion" to STRING,
-                            "calories" to INT,
-                        ),
-                    ),
-                ),
+                "dish_name" to STRING,
+                "cuisine" to STRING,
+                "items" to mapOf("type" to "array", "items" to ITEM),
                 "total_calories" to INT,
                 "protein_g" to INT,
                 "carbs_g" to INT,
                 "fat_g" to INT,
+                "fiber_g" to INT,
+                "sugar_g" to INT,
+                "sodium_mg" to INT,
+                "visual_cues" to mapOf("type" to "array", "items" to STRING),
                 "confidence" to mapOf("type" to "string", "enum" to listOf("high", "medium", "low")),
                 "notes" to STRING,
             ),
