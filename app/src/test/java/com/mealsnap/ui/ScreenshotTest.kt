@@ -12,7 +12,33 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.mealsnap.ai.CoachParser
 import com.mealsnap.ai.FoodItem
+import com.mealsnap.ai.GeminiAnalyzer
+import com.mealsnap.coach.ActivityLevel
+import com.mealsnap.coach.BodyMetrics
+import com.mealsnap.coach.CoachInputs
+import com.mealsnap.coach.CoachLoad
+import com.mealsnap.coach.DayNutrition
+import com.mealsnap.coach.Goal
+import com.mealsnap.coach.HealthDay
+import com.mealsnap.coach.HealthSnapshot
+import com.mealsnap.coach.MealTotals
+import com.mealsnap.coach.Profile
+import com.mealsnap.coach.RuleCoach
+import com.mealsnap.coach.Sex
+import com.mealsnap.coach.WeightPoint
+import com.mealsnap.health.DataCheckRow
+import com.mealsnap.health.HealthStatus
+import com.mealsnap.ui.coach.BriefingState
+import com.mealsnap.ui.coach.ChatContent
+import com.mealsnap.ui.coach.ChatMessage
+import com.mealsnap.ui.coach.ChatUiState
+import com.mealsnap.ui.coach.CoachActions
+import com.mealsnap.ui.coach.CoachContent
+import com.mealsnap.ui.coach.CoachUiState
+import com.mealsnap.ui.coach.ProfileContent
+import java.time.LocalDateTime
 import com.mealsnap.data.DayStats
 import com.mealsnap.data.Meal
 import com.mealsnap.data.MealType
@@ -237,5 +263,95 @@ class ScreenshotTest {
     @Config(sdk = [35], qualifiers = "w412dp-h1500dp-xxhdpi")
     fun settings() = shot("09_settings") {
         WithChrome(Routes.SETTINGS) { SettingsScreen() }
+    }
+
+    // ---- personal trainer ---------------------------------------------------------------------
+
+    private val coachDate = today
+    private val coachNow = LocalDateTime.of(2026, 11, 17, 18, 30)
+    private val fitProfile = Profile(heightCm = 178.0, weightKg = 84.0, birthYear = 1992, sex = Sex.MALE, activity = ActivityLevel.MODERATE, goal = Goal.LOSE, targetWeightKg = 78.0)
+
+    private fun hd(o: Int, steps: Long?, rhr: Int?, sleep: Long?) = HealthDay(
+        coachDate.minusDays(o.toLong()), steps = steps, restingHr = rhr, sleepMinutes = sleep,
+        avgHr = if (o == 0) 76 else null, minHr = if (o == 0) 54 else null, maxHr = if (o == 0) 128 else null,
+        activeKcal = if (o == 0) 210.0 else null, totalKcal = if (o == 0) 1830.0 else null,
+    )
+
+    private val week = listOf(hd(6, 9100, 57, 440), hd(5, 11200, 58, 450), hd(4, 7600, 57, 420), hd(3, 8800, 58, 430), hd(2, 6400, 59, 400), hd(1, 5200, 60, 380), hd(0, 4200, 64, 340))
+    private val weights = listOf(WeightPoint(coachDate.minusDays(21), 85.1), WeightPoint(coachDate.minusDays(14), 84.7), WeightPoint(coachDate.minusDays(7), 84.3), WeightPoint(coachDate, 84.0))
+
+    private fun coachLoad(profile: Profile, withHealth: Boolean): CoachLoad {
+        val goal = BodyMetrics.calorieGoal(profile, coachDate)
+        val goalKcal = goal?.kcal ?: 2000
+        val snapshot = if (withHealth) HealthSnapshot(week.last(), week, 84.0, 38.0, 97.0) else null
+        fun n(o: Int, kcal: Int, p: Int, meals: Int) = DayNutrition(coachDate.minusDays(o.toLong()), MealTotals(kcal, p, 150, 50, 14, meals))
+        val inputs = CoachInputs(
+            profile = profile, goalKcal = goalKcal, macros = profile.weightKg?.let { BodyMetrics.macroPlan(goalKcal, it, profile.goal) }, now = coachNow,
+            today = MealTotals(1240, 52, 170, 38, 11, 3, listOf("Breakfast: Idli with sambar (330 kcal)")),
+            nutritionWeek = listOf(n(6, 2200, 118, 3), n(5, 2350, 126, 4), n(4, 2100, 102, 3), n(3, 2500, 110, 4), n(2, 2300, 95, 3), n(1, 2650, 88, 4), n(0, 1240, 52, 3)),
+            health = snapshot, weights = if (profile.isComplete) weights else emptyList(),
+        )
+        return CoachLoad(profile, 2000, goal, inputs, snapshot, inputs.weights)
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w412dp-h1400dp-xxhdpi")
+    fun coachFirstRun() = shot("11_coach_setup") {
+        WithChrome(Routes.COACH) {
+            CoachContent(CoachUiState(loading = false, load = coachLoad(Profile(), false), healthStatus = HealthStatus.NEEDS_PERMISSION), CoachActions())
+        }
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w412dp-h3300dp-xxhdpi")
+    fun coachWithBriefingAndDevice() = shot("12_coach_full") {
+        val load = coachLoad(fitProfile, true)
+        val briefingText = GeminiAnalyzer.extractText(javaClass.getResource("/gemini/coach_briefing_response.json")!!.readText())
+        WithChrome(Routes.COACH) {
+            CoachContent(
+                CoachUiState(
+                    loading = false, load = load, tips = RuleCoach.tips(load.inputs), healthStatus = HealthStatus.CONNECTED,
+                    hasGeminiKey = true, consent = true, briefing = BriefingState.Ready(CoachParser.parseBriefing(briefingText)!!),
+                    dataCheck = listOf(
+                        DataCheckRow("Steps", 214, false, setOf("com.google.android.apps.fitbit")),
+                        DataCheckRow("Heart rate", 1000, true, setOf("com.google.android.apps.fitbit")),
+                        DataCheckRow("Sleep", 6, false, setOf("com.google.android.apps.fitbit")),
+                        DataCheckRow("Weight", 0, false, emptySet()),
+                    ),
+                ),
+                CoachActions(),
+            )
+        }
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w412dp-h2600dp-xxhdpi")
+    fun coachOfflineTips() = shot("13_coach_offline") {
+        val load = coachLoad(fitProfile, true)
+        WithChrome(Routes.COACH) {
+            CoachContent(CoachUiState(loading = false, load = load, tips = RuleCoach.tips(load.inputs), healthStatus = HealthStatus.CONNECTED, hasGeminiKey = false), CoachActions())
+        }
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w412dp-h2300dp-xxhdpi")
+    fun profileEditor() = shot("14_profile") {
+        ProfileContent(initial = fitProfile, currentGoalKcal = 2000, onBack = {}, onSave = { _, _ -> })
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w412dp-h1200dp-xxhdpi")
+    fun chatConversation() = shot("15_chat") {
+        val reply = CoachParser.cleanChat(GeminiAnalyzer.extractText(javaClass.getResource("/gemini/coach_chat_response.json")!!.readText()))
+        ChatContent(
+            ChatUiState(
+                messages = listOf(
+                    ChatMessage(true, "I only slept about 5.5 hours. Should I still do my leg workout today? And what should I eat for dinner?"),
+                    ChatMessage(false, reply),
+                ),
+                consent = true,
+            ),
+            onBack = {}, onOpenSettings = {}, onSend = {}, onAcceptConsent = {}, onDismissConsent = {},
+        )
     }
 }

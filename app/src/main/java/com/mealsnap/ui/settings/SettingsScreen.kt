@@ -76,6 +76,7 @@ fun SettingsScreen() {
     var geminiChoice by remember { mutableStateOf(GeminiChoice.LITE) }
     var showGeminiKey by remember { mutableStateOf(false) }
     var geminiOpen by remember { mutableStateOf(true) }
+    var coachConsent by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<CheckResult>>(emptyList()) }
     var nano by remember { mutableStateOf<NanoStatus?>(null) }
@@ -89,6 +90,7 @@ fun SettingsScreen() {
         autoLog = settings.autoLog.first()
         geminiKey = settings.geminiKey.first()
         geminiChoice = settings.geminiModel.first()
+        coachConsent = settings.coachConsent.first()
         claudeOpen = apiKey.isNotBlank()
         nano = app.container.nano.status()
     }
@@ -219,6 +221,32 @@ fun SettingsScreen() {
                     )
                 }
                 Switch(checked = autoLog, onCheckedChange = { autoLog = it })
+            }
+        }
+
+        // --- Personal trainer privacy ----------------------------------------------------------
+        FitCard(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.padding(20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Share health summary with Gemini", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Lets your AI trainer use your profile, meals and any heart-rate, sleep and weight data it can read. " +
+                            "Only a text summary is sent, only when you ask for a briefing or chat, and only if you've added a Google key.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = coachConsent,
+                    onCheckedChange = {
+                        coachConsent = it
+                        scope.launch { settings.setCoachConsent(it) }
+                    },
+                )
             }
         }
 

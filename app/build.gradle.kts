@@ -16,8 +16,8 @@ android {
         applicationId = "com.mealsnap"
         minSdk = 31 // Pixel 9 Pro ships with Android 15+, so Android 12+ is plenty
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
 
         // Pixel phones are arm64; leaving the other CPU types out keeps the APK much smaller.
         ndk { abiFilters += "arm64-v8a" }
@@ -124,6 +124,9 @@ dependencies {
     // On-device food recognition (no account, key or internet needed)
     implementation(libs.litert)
     implementation(libs.mlkit.genai.prompt) // optional Gemini Nano, used only where the phone supports it
+
+    // Reads steps, heart rate, sleep and weight that a tracker such as the Fitbit Air shares with the phone
+    implementation(libs.androidx.health.connect)
 
     // Optional: Claude, used only if the person adds their own API key in Settings
     implementation(libs.anthropic.java)

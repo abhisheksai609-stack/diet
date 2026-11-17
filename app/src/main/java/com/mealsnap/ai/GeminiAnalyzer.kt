@@ -24,6 +24,9 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
 
+/** One message in a conversation with the trainer. */
+data class ChatTurn(val fromUser: Boolean, val text: String)
+
 /**
  * Identifies a meal photo with Google's Gemini API, using a free key from Google AI Studio.
  *
@@ -42,6 +45,27 @@ class GeminiAnalyzer {
                 parseResponse(response.body)
             }
         }
+
+    /**
+     * Plain text generation for the personal-trainer features: an optional system prompt plus a conversation.
+     * Uses the same model fallback as photo analysis. With [json] the model is put in JSON mode.
+     */
+    suspend fun generateText(
+        apiKey: String,
+        preferredModel: String,
+        system: String,
+        turns: List<ChatTurn>,
+        json: Boolean = false,
+        maxTokens: Int = 2048,
+        temperature: Double = 0.6,
+    ): String = withContext(Dispatchers.IO) {
+        requireKey(apiKey)
+        val body = buildTextRequest(system, turns, json, maxTokens, temperature)
+        guarded {
+            val (_, response) = generateWithFallback(apiKey, preferredModel, body, TEXT_TIMEOUT_MS)
+            extractText(response.body)
+        }
+    }
 
     /**
      * Checks the key and that a model really answers (a tiny text request, so it costs next to nothing).
@@ -165,6 +189,7 @@ class GeminiAnalyzer {
         private const val BASE = "https://generativelanguage.googleapis.com/v1beta"
         private const val ANALYZE_TIMEOUT_MS = 25_000
         private const val VERIFY_TIMEOUT_MS = 15_000
+        private const val TEXT_TIMEOUT_MS = 40_000
         private const val MAX_ATTEMPTS = 4
 
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -210,12 +235,40 @@ class GeminiAnalyzer {
         }
 
         /** Reads the model's JSON answer out of a `generateContent` response. */
-        internal fun parseResponse(body: String): FoodAnalysis {
+        internal fun parseResponse(body: String): FoodAnalysis = FoodAnalysisParser.parse(extractText(body))
+
+        /** The JSON body for a text conversation (no image). */
+        internal fun buildTextRequest(system: String, turns: List<ChatTurn>, json: Boolean, maxTokens: Int, temperature: Double): String =
+            buildJsonObject {
+                if (system.isNotBlank()) {
+                    putJsonObject("systemInstruction") {
+                        putJsonArray("parts") { add(buildJsonObject { put("text", system) }) }
+                    }
+                }
+                putJsonArray("contents") {
+                    turns.forEach { turn ->
+                        add(
+                            buildJsonObject {
+                                put("role", if (turn.fromUser) "user" else "model")
+                                putJsonArray("parts") { add(buildJsonObject { put("text", turn.text) }) }
+                            },
+                        )
+                    }
+                }
+                putJsonObject("generationConfig") {
+                    if (json) put("responseMimeType", "application/json")
+                    put("temperature", temperature)
+                    put("maxOutputTokens", maxTokens)
+                }
+            }.toString()
+
+        /** The model's text from a `generateContent` response, or an [AnalysisException] explaining why there is none. */
+        internal fun extractText(body: String): String {
             val root = runCatching { json.parseToJsonElement(body) }.getOrNull() as? JsonObject
                 ?: throw AnalysisException("Couldn't understand Google's answer. Please try again.")
 
             val blocked = (root["promptFeedback"] as? JsonObject)?.get("blockReason")?.str()
-            if (blocked != null) throw AnalysisException("Google declined to look at this photo ($blocked). You can enter the details manually.")
+            if (blocked != null) throw AnalysisException("Google declined to answer ($blocked). You can enter the details manually.")
 
             val candidate = (root["candidates"] as? JsonArray)?.firstOrNull() as? JsonObject
                 ?: throw AnalysisException("Google returned no answer. Please try again.")
@@ -229,12 +282,12 @@ class GeminiAnalyzer {
                     when (reason) {
                         "MAX_TOKENS" -> "The estimate was cut off. Try again, or enter the details manually."
                         "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "IMAGE_SAFETY" ->
-                            "Google declined to analyse this photo. You can enter the details manually."
+                            "Google declined to answer. You can enter the details manually."
                         else -> "Google returned an empty answer. Please try again."
                     },
                 )
             }
-            return FoodAnalysisParser.parse(text)
+            return text
         }
 
         /** A message a person can act on for a failed HTTP call. */

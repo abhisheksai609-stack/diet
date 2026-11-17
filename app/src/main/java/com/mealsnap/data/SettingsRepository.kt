@@ -3,10 +3,15 @@ package com.mealsnap.data
 import android.content.Context
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.mealsnap.coach.ActivityLevel
+import com.mealsnap.coach.Goal
+import com.mealsnap.coach.Profile
+import com.mealsnap.coach.Sex
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -41,6 +46,14 @@ class SettingsRepository(private val context: Context) {
         val autoLog = booleanPreferencesKey("auto_log")
         val geminiKey = stringPreferencesKey("google_gemini_api_key")
         val geminiModel = stringPreferencesKey("google_gemini_model")
+        val heightCm = doublePreferencesKey("profile_height_cm")
+        val weightKg = doublePreferencesKey("profile_weight_kg")
+        val birthYear = intPreferencesKey("profile_birth_year")
+        val sex = stringPreferencesKey("profile_sex")
+        val activity = stringPreferencesKey("profile_activity")
+        val goal = stringPreferencesKey("profile_goal")
+        val targetWeightKg = doublePreferencesKey("profile_target_weight_kg")
+        val coachConsent = booleanPreferencesKey("coach_ai_consent")
     }
 
     val apiKey: Flow<String> = context.settingsStore.data.map { it[Keys.apiKey].orEmpty() }
@@ -49,6 +62,40 @@ class SettingsRepository(private val context: Context) {
 
     val geminiKey: Flow<String> = context.settingsStore.data.map { it[Keys.geminiKey].orEmpty() }
     val geminiModel: Flow<GeminiChoice> = context.settingsStore.data.map { GeminiChoice.fromId(it[Keys.geminiModel]) }
+
+    val profile: Flow<Profile> = context.settingsStore.data.map { p ->
+        Profile(
+            heightCm = p[Keys.heightCm],
+            weightKg = p[Keys.weightKg],
+            birthYear = p[Keys.birthYear],
+            sex = Sex.entries.firstOrNull { it.name == p[Keys.sex] } ?: Sex.OTHER,
+            activity = ActivityLevel.entries.firstOrNull { it.name == p[Keys.activity] } ?: ActivityLevel.MODERATE,
+            goal = Goal.entries.firstOrNull { it.name == p[Keys.goal] } ?: Goal.MAINTAIN,
+            targetWeightKg = p[Keys.targetWeightKg],
+        )
+    }
+
+    suspend fun saveProfile(profile: Profile) {
+        context.settingsStore.edit { prefs: MutablePreferences ->
+            fun <T> set(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T?) {
+                if (value == null) prefs.remove(key) else prefs[key] = value
+            }
+            set(Keys.heightCm, profile.heightCm)
+            set(Keys.weightKg, profile.weightKg)
+            set(Keys.birthYear, profile.birthYear)
+            prefs[Keys.sex] = profile.sex.name
+            prefs[Keys.activity] = profile.activity.name
+            prefs[Keys.goal] = profile.goal.name
+            set(Keys.targetWeightKg, profile.targetWeightKg)
+        }
+    }
+
+    /** True once the person agreed to send a health summary to Google Gemini for coaching. */
+    val coachConsent: Flow<Boolean> = context.settingsStore.data.map { it[Keys.coachConsent] ?: false }
+
+    suspend fun setCoachConsent(value: Boolean) {
+        context.settingsStore.edit { it[Keys.coachConsent] = value }
+    }
 
     /** When on (default), a meal is saved to the log as soon as the AI has identified it. */
     val autoLog: Flow<Boolean> = context.settingsStore.data.map { it[Keys.autoLog] ?: true }
@@ -69,6 +116,10 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.model] = model.id
             prefs[Keys.autoLog] = autoLog
         }
+    }
+
+    suspend fun setDailyGoal(kcal: Int) {
+        context.settingsStore.edit { it[Keys.dailyGoal] = kcal.coerceIn(500, 10_000) }
     }
 
     companion object {

@@ -8,6 +8,7 @@ MealSnap bundles or uses the following. Their licences apply to them, not to Mea
   taken from a public GitHub project that redistributes it, and is unmodified apart from format.
 - **LiteRT** (Google AI Edge), Apache License 2.0: runs the classifier on the phone.
 - **ML Kit GenAI Prompt API** (Google): optional use of on-device Gemini Nano where the phone supports it.
+- **Health Connect client library** (AndroidX), Apache License 2.0: reads data your tracker shares with the phone.
 - **Google Gemini API** (optional, with your own key): called over HTTPS; subject to Google's terms.
 - **Anthropic Java SDK**, MIT License: used only if you add your own Anthropic API key.
 - **AndroidX, Jetpack Compose, Room, Coil, Kotlin and kotlinx libraries**, Apache License 2.0.

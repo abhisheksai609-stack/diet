@@ -6,10 +6,11 @@ how many calories it has, and logs all of it for you. **It works entirely on you
 no API key, no subscription and no internet.** Add a free Google key if you want smarter results.
 
 <p>
-  <img src="docs/screenshots/today.png" width="24%" alt="Today screen with calorie ring and food log">
-  <img src="docs/screenshots/meal-details.png" width="24%" alt="A recognised meal with alternatives, portion chips and breakdown">
-  <img src="docs/screenshots/trends.png" width="24%" alt="Weekly trends and daily log">
-  <img src="docs/screenshots/settings.png" width="24%" alt="Settings showing on-device food recognition">
+  <img src="docs/screenshots/today.png" width="19%" alt="Today screen with calorie ring and food log">
+  <img src="docs/screenshots/meal-details.png" width="19%" alt="A recognised meal with alternatives, portion chips and breakdown">
+  <img src="docs/screenshots/trends.png" width="19%" alt="Weekly trends and daily log">
+  <img src="docs/screenshots/coach.png" width="19%" alt="Coach tab with AI briefing, targets, health data and weight">
+  <img src="docs/screenshots/settings.png" width="19%" alt="Settings showing on-device food recognition">
 </p>
 
 ## How it works
@@ -45,6 +46,42 @@ canvas, a pill navigation bar, with light and dark themes.
 - Recognition quality depends on the photo: good light, the dish filling the frame, top-down or
   slightly angled.
 
+## Personal trainer (Coach tab)
+
+Tell MealSnap your height, weight, year of birth, activity level and goal, and the **Coach** tab works out safe
+targets and coaches you using your own meals, heart rate, sleep and weight.
+
+- **Your numbers:** BMI, resting burn (Mifflin-St Jeor), daily burn with your activity, a suggested calorie intake
+  for your goal, protein/carb/fat targets, water, steps and heart-rate zones. The app never suggests eating
+  below 1,200 kcal (women), 1,500 kcal (men) or 1,350 kcal (other), and suggests no deficit if your BMI is
+  underweight. One tap makes the suggestion your daily goal.
+- **Health data from your tracker:** steps, heart rate, resting heart rate, sleep, active and total calories,
+  distance, workouts, weight, heart-rate variability and blood oxygen are read from Android's **Health Connect**,
+  with your permission and read-only. Everything stays on your phone.
+- **Tips with no AI at all:** rule-based tips from your numbers (resting heart rate jumping above your average,
+  a short night, too little protein, eating far too little, steps, weight changing too fast...), always with
+  "see a doctor" advice when a reading is outside a normal range.
+- **AI trainer (optional, needs a free Google key):** a daily briefing with a workout and a next-meal idea,
+  and a chat where you can ask anything ("should I train on 5 hours' sleep?"). It sees a text summary of your
+  numbers, never your photos or name, and only after you agree (switchable any time in Settings).
+- **Weight log:** type a weigh-in (or let a smart scale write it to Health Connect) and see your trend and
+  distance to target.
+
+### Connecting a Fitbit Air
+
+The old Fitbit cloud API was switched off in 2026 and its replacement (the Google Health API) needs Google's
+approval for each app, so MealSnap does not use it. Instead it reads what the **Google Health** app (the new
+Fitbit app) shares with **Health Connect** on your phone:
+
+1. Pair the Fitbit Air in the Google Health app.
+2. In that app, turn on sharing with Health Connect (look for Health Connect in its settings).
+3. In MealSnap's Coach tab, tap **Allow health data** and choose what it may read.
+4. Tap **Check what's arriving**: it lists how many records of each kind arrived in the last 7 days and which app
+   wrote them, so you can see exactly what your band is sharing.
+
+I could not test this with a real Fitbit Air. How much of its data Google Health writes to Health Connect is
+decided by Google and may change, which is what the data check is for.
+
 ## Optional extras (never required)
 
 - **Google Gemini (free key, recommended upgrade):** add a free key from
@@ -75,7 +112,9 @@ Every build is signed with the same key, so a newer APK installs over the old on
 Photos and the meal log are stored only on the phone (app-private storage), and by default recognition
 happens on the phone. A photo leaves the device only if you add a Google or Anthropic key, in which case it is
 sent to that company for analysis. **On Google's free tier, Google may use what you send to improve its
-products**, so don't use a Google key for photos you want to keep private. Keys you add are stored in the app's
+products**, so don't use a Google key for photos or health data you want to keep private. The personal trainer sends
+a text summary of your profile and health numbers to Google only when you ask for a briefing or chat, and only if
+you agreed in the app; health data is read from Health Connect and never leaves the phone otherwise. Keys you add are stored in the app's
 private settings and excluded from Android backups. Remove a key in Settings to go back to fully on-device.
 
 ## Build it yourself
@@ -96,7 +135,8 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 | Camera / upload | System camera (`TakePicture`, no camera permission needed) and the Android photo picker |
 | Recognition | Bundled AIY food classifier (TFLite, 192 px, quantised) run with LiteRT; optional Google Gemini over REST (model list, fallback chain, JSON mode); optional Gemini Nano via the ML Kit GenAI Prompt API; optional Claude via the Anthropic Java SDK |
 | Nutrition | Built-in table of about 230 foods per 100 g plus typical servings; every row is unit-tested for calorie/macro consistency |
-| Storage | Room (meals, with a tested 1 to 2 migration), private files (photos), DataStore (settings) |
+| Health | Health Connect client (read-only): steps, heart rate, sleep, calories, weight, HRV, SpO2 |
+| Storage | Room (meals and weights, with tested migrations), private files (photos), DataStore (settings) |
 | Tests | Parsing, matching, request shape, day maths, DB schema; Gemini parsing and model ranking tested against captured real API responses; Robolectric screenshot tests render every screen |
 | Min Android | 12 (API 31), arm64 devices, targets API 36 |
 

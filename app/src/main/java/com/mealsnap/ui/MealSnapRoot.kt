@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -41,6 +42,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.mealsnap.MealSnapApplication
+import com.mealsnap.ui.coach.ChatScreen
+import com.mealsnap.ui.coach.CoachScreen
+import com.mealsnap.ui.coach.ProfileScreen
 import com.mealsnap.ui.components.AddMealSheet
 import com.mealsnap.ui.editor.MealEditorScreen
 import com.mealsnap.ui.history.HistoryScreen
@@ -53,6 +57,9 @@ object Routes {
     const val TODAY = "today"
     const val HISTORY = "history"
     const val SETTINGS = "settings"
+    const val COACH = "coach"
+    const val PROFILE = "profile"
+    const val CHAT = "chat"
     const val EDITOR = "editor?mealId={mealId}&photo={photo}"
 
     /** A new meal from a photo file; a blank [photoPath] opens an empty manual-entry form. */
@@ -65,6 +72,7 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 private val tabs = listOf(
     Tab(Routes.TODAY, "Today", Icons.Default.Home),
     Tab(Routes.HISTORY, "Trends", Icons.Default.DateRange),
+    Tab(Routes.COACH, "Coach", Icons.Default.Favorite),
     Tab(Routes.SETTINGS, "Settings", Icons.Default.Settings),
 )
 
@@ -108,6 +116,11 @@ fun MealSnapRoot() {
         pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
+    /** Opens Settings on top of whatever is showing, so Back returns to it. */
+    fun openSettings() {
+        navController.navigate(Routes.SETTINGS) { launchSingleTop = true }
+    }
+
     MealSnapScaffold(
         route = route,
         onTab = { target ->
@@ -135,6 +148,15 @@ fun MealSnapRoot() {
             composable(Routes.HISTORY) {
                 HistoryScreen(onOpenMeal = { navController.navigate(Routes.editorExisting(it)) })
             }
+            composable(Routes.COACH) {
+                CoachScreen(
+                    onEditProfile = { navController.navigate(Routes.PROFILE) },
+                    onOpenChat = { navController.navigate(Routes.CHAT) },
+                    onOpenSettings = { openSettings() },
+                )
+            }
+            composable(Routes.PROFILE) { ProfileScreen(onDone = { navController.popBackStack() }) }
+            composable(Routes.CHAT) { ChatScreen(onBack = { navController.popBackStack() }, onOpenSettings = { openSettings() }) }
             composable(Routes.SETTINGS) { SettingsScreen() }
             composable(
                 Routes.EDITOR,
@@ -170,7 +192,7 @@ fun MealSnapScaffold(
     onAddMeal: () -> Unit,
     content: @Composable (PaddingValues) -> Unit,
 ) {
-    val showChrome = route == Routes.TODAY || route == Routes.HISTORY || route == Routes.SETTINGS
+    val showChrome = route == Routes.TODAY || route == Routes.HISTORY || route == Routes.COACH || route == Routes.SETTINGS
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
