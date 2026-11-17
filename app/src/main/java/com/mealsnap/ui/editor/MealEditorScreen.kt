@@ -242,7 +242,7 @@ private fun StatusCard(state: EditorState, onRetry: () -> Unit) {
                         color = scheme.onPrimaryContainer,
                     )
                     Text(
-                        if (state.workingOn == "Claude") "Sending the photo to Claude. This takes a few seconds."
+                        if (state.workingOn != "your phone") "Sending the photo to ${state.workingOn}. This takes a few seconds."
                         else "Working it out on your phone. No internet or account needed.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = scheme.onPrimaryContainer,

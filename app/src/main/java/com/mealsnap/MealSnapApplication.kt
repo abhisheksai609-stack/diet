@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.room.Room
 import com.mealsnap.ai.FoodAnalyzer
 import com.mealsnap.ai.FoodClassifier
+import com.mealsnap.ai.GeminiAnalyzer
 import com.mealsnap.ai.NanoRecognizer
 import com.mealsnap.ai.RecognitionService
 import com.mealsnap.data.AppDatabase
@@ -22,9 +23,10 @@ class AppContainer(context: Context) {
     val settings = SettingsRepository(context)
     val photos = PhotoStore(context)
     val analyzer = FoodAnalyzer()
+    val gemini = GeminiAnalyzer()
     val nano = NanoRecognizer()
     val classifier = FoodClassifier(context.applicationContext)
-    val recognizer = RecognitionService(analyzer, classifier, nano, settings)
+    val recognizer = RecognitionService(gemini, analyzer, classifier, nano, settings)
 }
 
 class MealSnapApplication : Application() {

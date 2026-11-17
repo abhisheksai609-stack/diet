@@ -16,8 +16,8 @@ android {
         applicationId = "com.mealsnap"
         minSdk = 31 // Pixel 9 Pro ships with Android 15+, so Android 12+ is plenty
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
 
         // Pixel phones are arm64; leaving the other CPU types out keeps the APK much smaller.
         ndk { abiFilters += "arm64-v8a" }

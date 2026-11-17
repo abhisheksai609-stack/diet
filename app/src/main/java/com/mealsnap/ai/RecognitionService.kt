@@ -14,29 +14,51 @@ import kotlinx.coroutines.withContext
 /**
  * Decides who looks at the photo. Nothing here needs an account or a key:
  *
- *  1. If the person typed a description, the built-in food table is searched with it.
- *  2. Claude, only if the person has added an optional API key (best accuracy, needs internet).
- *  3. Gemini Nano, if this phone supports it and the model is downloaded.
- *  4. The bundled food classifier, which works on every phone, offline.
+ *  1. Google Gemini, only if the person added a (free) Google AI Studio key: best accuracy, needs internet.
+ *  2. Claude, only if the person added an Anthropic key.
+ *  3. If the person typed a description, the built-in food table is searched with it.
+ *  4. Gemini Nano, if this phone supports it and the model is downloaded.
+ *  5. The bundled food classifier, which works on every phone, offline.
+ *
+ * If a cloud service fails (no internet, quota used up) the next option is used and the meal's note says so.
  */
 class RecognitionService(
+    private val gemini: GeminiAnalyzer,
     private val claude: FoodAnalyzer,
     private val classifier: FoodClassifier,
     private val nano: NanoRecognizer,
     private val settings: SettingsRepository,
 ) {
     suspend fun recognize(jpeg: ByteArray, hint: String): Recognition = withContext(Dispatchers.Default) {
-        var fallbackNote: String? = null
+        val fallbackNotes = mutableListOf<String>()
+
+        val geminiKey = settings.geminiKey.first()
+        if (geminiKey.isNotBlank()) {
+            try {
+                val analysis = gemini.analyze(geminiKey, settings.geminiModel.first().id, jpeg, hint)
+                if (!analysis.isFood) throw NotFoodException()
+                return@withContext Recognition(Engine.GEMINI, analysis)
+            } catch (e: NotFoodException) {
+                throw e
+            } catch (e: AnalysisException) {
+                fallbackNotes += "Google Gemini couldn't be used (${e.message?.trimEnd('.')})."
+            }
+        }
 
         val apiKey = settings.apiKey.first()
         if (apiKey.isNotBlank()) {
             try {
                 val model = settings.model.first()
-                return@withContext Recognition(Engine.CLAUDE, claude.analyze(apiKey, model.id, jpeg, hint))
+                val analysis = claude.analyze(apiKey, model.id, jpeg, hint)
+                if (!analysis.isFood) throw NotFoodException()
+                return@withContext Recognition(Engine.CLAUDE, analysis)
+            } catch (e: NotFoodException) {
+                throw e
             } catch (e: AnalysisException) {
-                fallbackNote = "Claude couldn't be used (${e.message?.trimEnd('.')}), so this was identified on your phone."
+                fallbackNotes += "Claude couldn't be used (${e.message?.trimEnd('.')})."
             }
         }
+        val fallbackNote = if (fallbackNotes.isEmpty()) null else fallbackNotes.joinToString(" ") + " So this was identified on your phone."
 
         if (hint.isNotBlank()) {
             fromDescription(hint)?.let { return@withContext it.withNote(fallbackNote) }

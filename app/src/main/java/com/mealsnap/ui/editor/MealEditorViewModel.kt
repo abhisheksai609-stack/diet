@@ -180,10 +180,12 @@ class MealEditorViewModel(
         val photo = _state.value.photoPath ?: return
         analysisJob?.cancel()
         analysisJob = viewModelScope.launch {
-            val usesClaude = container.settings.apiKey.first().isNotBlank()
-            _state.update {
-                it.copy(status = AnalysisStatus.Analyzing, workingOn = if (usesClaude) "Claude" else "your phone")
+            val workingOn = when {
+                container.settings.geminiKey.first().isNotBlank() -> "Google Gemini"
+                container.settings.apiKey.first().isNotBlank() -> "Claude"
+                else -> "your phone"
             }
+            _state.update { it.copy(status = AnalysisStatus.Analyzing, workingOn = workingOn) }
             try {
                 val bytes = withContext(Dispatchers.IO) { File(photo).readBytes() }
                 val recognition = container.recognizer.recognize(bytes, _state.value.hint)

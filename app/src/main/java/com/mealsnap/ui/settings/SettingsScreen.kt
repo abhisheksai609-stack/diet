@@ -45,6 +45,7 @@ import com.mealsnap.MealSnapApplication
 import com.mealsnap.ai.AnalysisException
 import com.mealsnap.ai.NanoStatus
 import com.mealsnap.data.AiModel
+import com.mealsnap.data.GeminiChoice
 import com.mealsnap.data.SettingsRepository
 import com.mealsnap.ui.components.FitCard
 import kotlinx.coroutines.CancellationException
@@ -52,13 +53,10 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-private sealed interface KeyCheck {
-    data object Idle : KeyCheck
-    data object Testing : KeyCheck
-    data class Result(val ok: Boolean, val message: String) : KeyCheck
-}
+private data class CheckResult(val ok: Boolean, val message: String)
 
 private const val CONSOLE_KEYS_URL = "https://console.anthropic.com/settings/keys"
+private const val AI_STUDIO_KEYS_URL = "https://aistudio.google.com/apikey"
 
 @Composable
 fun SettingsScreen() {
@@ -74,7 +72,12 @@ fun SettingsScreen() {
     var autoLog by remember { mutableStateOf(true) }
     var showKey by remember { mutableStateOf(false) }
     var claudeOpen by remember { mutableStateOf(false) }
-    var check by remember { mutableStateOf<KeyCheck>(KeyCheck.Idle) }
+    var geminiKey by remember { mutableStateOf("") }
+    var geminiChoice by remember { mutableStateOf(GeminiChoice.LITE) }
+    var showGeminiKey by remember { mutableStateOf(false) }
+    var geminiOpen by remember { mutableStateOf(true) }
+    var testing by remember { mutableStateOf(false) }
+    var results by remember { mutableStateOf<List<CheckResult>>(emptyList()) }
     var nano by remember { mutableStateOf<NanoStatus?>(null) }
     var nanoDownloading by remember { mutableStateOf(false) }
     var nanoError by remember { mutableStateOf<String?>(null) }
@@ -84,18 +87,21 @@ fun SettingsScreen() {
         goal = settings.dailyGoal.first().toString()
         model = settings.model.first()
         autoLog = settings.autoLog.first()
+        geminiKey = settings.geminiKey.first()
+        geminiChoice = settings.geminiModel.first()
         claudeOpen = apiKey.isNotBlank()
         nano = app.container.nano.status()
     }
 
-    fun pasteKey() {
+    /** Reads the clipboard and hands the text to [onText] (used by both key fields). */
+    fun pasteInto(onText: (String) -> Unit) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val text = clipboard.primaryClip
             ?.takeIf { it.itemCount > 0 }
             ?.getItemAt(0)?.coerceToText(context)?.toString()?.trim()
         if (!text.isNullOrBlank()) {
-            apiKey = text
-            check = KeyCheck.Idle
+            onText(text)
+            results = emptyList()
         }
     }
 
@@ -115,7 +121,7 @@ fun SettingsScreen() {
                 Text("Food recognition", style = MaterialTheme.typography.titleLarge)
                 Text(
                     "MealSnap identifies your food right on your phone, with no account, key or internet needed. " +
-                        "Your photos never leave the device.",
+                        "Photos only leave the device if you add a Google or Anthropic key below.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -216,6 +222,80 @@ fun SettingsScreen() {
             }
         }
 
+        // --- Optional Google Gemini ------------------------------------------------------------
+        FitCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Smarter recognition with Google Gemini",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { geminiOpen = !geminiOpen }) { Text(if (geminiOpen) "Hide" else "Show") }
+                }
+                Text(
+                    "Optional and free. With a Google AI Studio key, Gemini reads your photo, names every item on the plate " +
+                        "and estimates each portion. If the free quota runs out or you're offline, MealSnap switches back to " +
+                        "on-device recognition by itself.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (geminiOpen) {
+                    Text("1. Get a free key", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "Sign in with your Google account, tap Create API key, then copy the key.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    FilledTonalButton(onClick = { uriHandler.openUri(AI_STUDIO_KEYS_URL) }, shape = RoundedCornerShape(50)) {
+                        Text("Open Google AI Studio")
+                    }
+                    Text("2. Paste it here", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    OutlinedTextField(
+                        value = geminiKey,
+                        onValueChange = { geminiKey = it.trim(); results = emptyList() },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Google API key") },
+                        singleLine = true,
+                        visualTransformation = if (showGeminiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(onClick = { pasteInto { geminiKey = it } }, shape = RoundedCornerShape(50)) {
+                            Text("Paste from clipboard")
+                        }
+                        TextButton(onClick = { showGeminiKey = !showGeminiKey }) { Text(if (showGeminiKey) "Hide key" else "Show key") }
+                    }
+                    Text("3. Pick a model, then Save", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Column(Modifier.selectableGroup()) {
+                        GeminiChoice.entries.forEach { option ->
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .selectable(selected = option == geminiChoice, onClick = { geminiChoice = option; results = emptyList() }, role = Role.RadioButton)
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(selected = option == geminiChoice, onClick = null)
+                                Column(Modifier.padding(start = 14.dp)) {
+                                    Text(option.label, style = MaterialTheme.typography.bodyLarge)
+                                    Text(
+                                        option.hint,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Text(
+                        "Privacy: with a key set, each photo is sent to Google for analysis. On Google's free tier, Google may " +
+                            "use what you send to improve its products. Remove the key to stay fully on-device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
         // --- Optional Claude -------------------------------------------------------------------
         FitCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -239,7 +319,7 @@ fun SettingsScreen() {
                     }
                     OutlinedTextField(
                         value = apiKey,
-                        onValueChange = { apiKey = it.trim(); check = KeyCheck.Idle },
+                        onValueChange = { apiKey = it.trim(); results = emptyList() },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("API key (sk-ant-…)") },
                         singleLine = true,
@@ -247,14 +327,14 @@ fun SettingsScreen() {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = ::pasteKey, shape = RoundedCornerShape(50)) { Text("Paste from clipboard") }
+                        FilledTonalButton(onClick = { pasteInto { apiKey = it } }, shape = RoundedCornerShape(50)) { Text("Paste from clipboard") }
                         TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide key" else "Show key") }
                     }
                     Column(Modifier.selectableGroup()) {
                         AiModel.entries.forEach { option ->
                             Row(
                                 Modifier.fillMaxWidth()
-                                    .selectable(selected = option == model, onClick = { model = option; check = KeyCheck.Idle }, role = Role.RadioButton)
+                                    .selectable(selected = option == model, onClick = { model = option; results = emptyList() }, role = Role.RadioButton)
                                     .padding(vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -283,32 +363,48 @@ fun SettingsScreen() {
         Button(
             onClick = {
                 scope.launch {
-                    settings.save(apiKey, goal.toIntOrNull() ?: SettingsRepository.DEFAULT_GOAL, model, autoLog)
+                    settings.save(
+                        apiKey = apiKey,
+                        dailyGoal = goal.toIntOrNull() ?: SettingsRepository.DEFAULT_GOAL,
+                        model = model,
+                        autoLog = autoLog,
+                        geminiKey = geminiKey,
+                        geminiModel = geminiChoice,
+                    )
                     goal = settings.dailyGoal.first().toString()
-                    if (apiKey.isBlank()) {
-                        check = KeyCheck.Result(true, "Saved.")
-                    } else {
-                        check = KeyCheck.Testing
-                        check = try {
-                            app.container.analyzer.verifyKey(apiKey, model.id)
-                            KeyCheck.Result(true, "Saved. Your Claude key works, so photos will use Claude.")
+                    testing = true
+                    val found = mutableListOf<CheckResult>()
+                    if (geminiKey.isNotBlank()) {
+                        found += try {
+                            val used = app.container.gemini.verifyKey(geminiKey, geminiChoice.id)
+                            CheckResult(true, "Google Gemini works (using $used). Photos will be read by Gemini.")
                         } catch (e: AnalysisException) {
-                            KeyCheck.Result(false, "Saved, but the key didn't work: ${e.message}")
+                            CheckResult(false, "Google Gemini: ${e.message}")
                         }
                     }
+                    if (apiKey.isNotBlank()) {
+                        found += try {
+                            app.container.analyzer.verifyKey(apiKey, model.id)
+                            CheckResult(true, "Your Claude key works.")
+                        } catch (e: AnalysisException) {
+                            CheckResult(false, "Claude: ${e.message}")
+                        }
+                    }
+                    results = found.ifEmpty { listOf(CheckResult(true, "Saved. Photos are recognised on your phone.")) }
+                    testing = false
                 }
             },
-            enabled = check != KeyCheck.Testing,
+            enabled = !testing,
             shape = RoundedCornerShape(50),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
-                if (check == KeyCheck.Testing) "Checking key…" else "Save",
+                if (testing) "Checking…" else "Save",
                 modifier = Modifier.padding(vertical = 4.dp),
             )
         }
 
-        (check as? KeyCheck.Result)?.let { result ->
+        results.forEach { result ->
             Text(
                 result.message,
                 style = MaterialTheme.typography.bodyMedium,

@@ -2,8 +2,8 @@
 
 A calorie tracker for Android (built for a Pixel 9 Pro) where logging a meal is just a photo.
 Snap your plate before you eat. MealSnap works out what the dish is, how much of it there is and
-how many calories it has, and logs all of it for you. **It runs entirely on your phone: no account,
-no API key, no subscription and no internet needed.**
+how many calories it has, and logs all of it for you. **It works entirely on your phone with no account,
+no API key, no subscription and no internet.** Add a free Google key if you want smarter results.
 
 <p>
   <img src="docs/screenshots/today.png" width="24%" alt="Today screen with calorie ring and food log">
@@ -47,12 +47,18 @@ canvas, a pill navigation bar, with light and dark themes.
 
 ## Optional extras (never required)
 
+- **Google Gemini (free key, recommended upgrade):** add a free key from
+  [Google AI Studio](https://aistudio.google.com/apikey) in Settings and photos are read by Gemini, which names
+  **every item on the plate** and estimates each portion and its calories, instead of the single most likely dish.
+  Setup is three steps in Settings: open AI Studio, paste the key, Save (the app tests it).
+  - Free keys have daily limits. When the quota runs out, or there is no internet, MealSnap quietly uses
+    on-device recognition instead and says so in the meal's notes.
+  - Google's model names and capacity change often, so the app picks a fast, stable model (Flash-Lite by default)
+    and automatically tries others if one is retired, busy or silent.
 - **Gemini Nano (Pixel AI):** if your phone supports it, Settings shows a one-time download. It can read a
-  whole plate, name each item and guess its weight. It is checked at run time and silently skipped if the
-  phone doesn't support it.
-- **Claude:** if you already have an Anthropic API key you can add it in Settings for a more detailed
-  breakdown of mixed plates (about 1 to 2 US cents per photo, billed by Anthropic). Leave it empty to
-  stay fully on-device.
+  whole plate on the device. It is checked at run time and silently skipped if the phone doesn't support it.
+- **Claude:** if you already have an Anthropic API key you can add it in Settings too (about 1 to 2 US cents per
+  photo, billed by Anthropic). If both a Google and an Anthropic key are set, Google is tried first.
 
 ## Install on your Pixel
 
@@ -66,9 +72,11 @@ Every build is signed with the same key, so a newer APK installs over the old on
 
 ## Privacy
 
-Photos and the meal log are stored only on the phone (app-private storage), and recognition happens on
-the phone. A photo leaves the device only if you add a Claude API key, in which case it is sent to Anthropic
-for analysis. Any key you add is stored in the app's private settings and excluded from Android backups.
+Photos and the meal log are stored only on the phone (app-private storage), and by default recognition
+happens on the phone. A photo leaves the device only if you add a Google or Anthropic key, in which case it is
+sent to that company for analysis. **On Google's free tier, Google may use what you send to improve its
+products**, so don't use a Google key for photos you want to keep private. Keys you add are stored in the app's
+private settings and excluded from Android backups. Remove a key in Settings to go back to fully on-device.
 
 ## Build it yourself
 
@@ -86,10 +94,10 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 |------|--------|
 | UI | Kotlin, Jetpack Compose, Material 3 with a custom Fitbit-inspired theme |
 | Camera / upload | System camera (`TakePicture`, no camera permission needed) and the Android photo picker |
-| Recognition | Bundled AIY food classifier (TFLite, 192 px, quantised) run with LiteRT; optional Gemini Nano via the ML Kit GenAI Prompt API; optional Claude via the Anthropic Java SDK |
+| Recognition | Bundled AIY food classifier (TFLite, 192 px, quantised) run with LiteRT; optional Google Gemini over REST (model list, fallback chain, JSON mode); optional Gemini Nano via the ML Kit GenAI Prompt API; optional Claude via the Anthropic Java SDK |
 | Nutrition | Built-in table of about 230 foods per 100 g plus typical servings; every row is unit-tested for calorie/macro consistency |
 | Storage | Room (meals, with a tested 1 to 2 migration), private files (photos), DataStore (settings) |
-| Tests | Parsing, matching, request shape, day maths, DB schema; Robolectric screenshot tests render every screen |
+| Tests | Parsing, matching, request shape, day maths, DB schema; Gemini parsing and model ranking tested against captured real API responses; Robolectric screenshot tests render every screen |
 | Min Android | 12 (API 31), arm64 devices, targets API 36 |
 
 See [NOTICE.md](NOTICE.md) for third-party licences. `app/debug.keystore` is the standard public Android

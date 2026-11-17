@@ -5,6 +5,7 @@ import com.mealsnap.nutrition.FoodEntry
 
 /** Which part of the app (or which service) identified the food. */
 enum class Engine(val label: String, val onDevice: Boolean) {
+    GEMINI("Google Gemini", onDevice = false),
     CLAUDE("Claude", onDevice = false),
     NANO("Gemini Nano on your phone", onDevice = true),
     CLASSIFIER("food recognition on your phone", onDevice = true),

@@ -26,7 +26,12 @@ import kotlinx.serialization.SerializationException
 import java.time.Duration
 
 /** An error whose [message] is safe to show to the user as-is. */
-class AnalysisException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class AnalysisException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** The AI looked at the photo and says it isn't food. Not worth retrying on another engine. */
+class NotFoodException : AnalysisException(
+    "That doesn't look like food. Add a short description and tap Re-estimate, or enter it by hand.",
+)
 
 /**
  * Sends a meal photo to Claude and returns a structured, detailed nutrition estimate: the dish
@@ -150,7 +155,7 @@ class FoodAnalyzer {
                 .maxTokens(6000L)
                 .addBeta("server-side-fallback-2026-07-01")
                 .fallbacksDefault()
-                .system(SYSTEM_PROMPT)
+                .system(FoodPrompts.SYSTEM)
                 .outputConfig(
                     BetaOutputConfig.builder()
                         .effort(BetaOutputConfig.Effort.LOW)
@@ -174,26 +179,6 @@ class FoodAnalyzer {
                 .build()
         }
 
-        private const val SYSTEM_PROMPT = """You are the food recognition and nutrition engine inside a personal calorie-tracking app. The user takes a photo of their food just before eating it, and everything you return is logged automatically with no human review, so be specific and careful.
-
-Identify:
-- dish_name: the specific name of the dish or meal as a person would say it, e.g. "Chicken tikka masala with basmati rice" or "Avocado toast with poached egg". Not a generic word like "food" or "lunch". For a plate with several dishes, name the overall meal.
-- cuisine: the cuisine or style if clear (e.g. "Indian", "Italian", "Fast food"), otherwise an empty string.
-- items: every distinct food and drink you can see, including sauces, dressings, sides and beverages. For each give a short name, a portion with your best amount estimate ("about 150 g", "1 medium bowl, ~300 ml", "2 slices"), its calories, and its protein, carbohydrate and fat in grams.
-
-Estimate portions from visual cues: plate, bowl or cup size, cutlery and hands for scale, packaging, thickness and spread of the food, and how full the plate is. Estimate the portion actually shown, not a standard serving. Account for visible cooking oil, butter, cheese and sauces. If a package, menu item or nutrition label is legible, use its figures.
-
-Totals:
-- total_calories, protein_g, carbs_g and fat_g are for the whole photo and must equal the sum of the items. Use one central, realistic estimate, not a range. Round calories to the nearest 5 and grams to whole numbers.
-- fiber_g, sugar_g and sodium_mg (milligrams) are your best estimates for the whole photo.
-
-Explain:
-- visual_cues: 2 to 5 short phrases naming what you saw that drove the identification and the portion sizes (for example "Standard dinner plate, about 26 cm", "Fork for scale", "Glossy sauce suggests added oil").
-- confidence: "high" for clearly visible, simple foods; "medium" when portions or ingredients are uncertain; "low" when much is hidden or unclear.
-- notes: one short sentence stating the main assumption.
-
-If the image contains no food or drink, set is_food to false, dish_name and cuisine to empty strings, items and visual_cues to empty lists and every number to 0.
-If the user adds a description, treat it as ground truth over what you infer from the image."""
 
         private val INT = mapOf("type" to "integer")
         private val STRING = mapOf("type" to "string")
