@@ -12,7 +12,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -21,7 +20,6 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,7 +33,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -81,12 +78,7 @@ fun MealSnapRoot() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
 
-    // null until the saved key has loaded, so we never nag before we know.
-    val storedKey by app.container.settings.apiKey.collectAsStateWithLifecycle(initialValue = null)
-    val keyMissing = storedKey?.isBlank() == true
-
     var showAddSheet by remember { mutableStateOf(false) }
-    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     // Survives the activity being recreated while the camera app is in the foreground.
     var pendingCapture by rememberSaveable { mutableStateOf<String?>(null) }
@@ -116,16 +108,6 @@ fun MealSnapRoot() {
         pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
-    /** Opens Settings on top of whatever is showing, so Back returns to it. */
-    fun openSettings() {
-        navController.navigate(Routes.SETTINGS) { launchSingleTop = true }
-    }
-
-    /** Photo flows need the API key; offer to set it up first instead of dead-ending later. */
-    fun withKeyCheck(action: () -> Unit) {
-        if (keyMissing) pendingAction = action else action()
-    }
-
     MealSnapScaffold(
         route = route,
         onTab = { target ->
@@ -145,10 +127,9 @@ fun MealSnapRoot() {
             composable(Routes.TODAY) {
                 TodayScreen(
                     onOpenMeal = { navController.navigate(Routes.editorExisting(it)) },
-                    onTakePhoto = { withKeyCheck { launchCamera() } },
-                    onUploadPhoto = { withKeyCheck { launchGallery() } },
+                    onTakePhoto = { launchCamera() },
+                    onUploadPhoto = { launchGallery() },
                     onManual = { navController.navigate(Routes.editorNew("")) },
-                    onOpenSettings = { openSettings() },
                 )
             }
             composable(Routes.HISTORY) {
@@ -166,7 +147,6 @@ fun MealSnapRoot() {
                     mealId = entry.arguments?.getLong("mealId") ?: -1L,
                     photo = entry.arguments?.getString("photo").orEmpty(),
                     onClose = { navController.popBackStack() },
-                    onOpenSettings = { openSettings() },
                 )
             }
         }
@@ -175,29 +155,9 @@ fun MealSnapRoot() {
     if (showAddSheet) {
         AddMealSheet(
             onDismiss = { showAddSheet = false },
-            onTakePhoto = { showAddSheet = false; withKeyCheck { launchCamera() } },
-            onUploadPhoto = { showAddSheet = false; withKeyCheck { launchGallery() } },
+            onTakePhoto = { showAddSheet = false; launchCamera() },
+            onUploadPhoto = { showAddSheet = false; launchGallery() },
             onManual = { showAddSheet = false; navController.navigate(Routes.editorNew("")) },
-        )
-    }
-
-    pendingAction?.let { action ->
-        AlertDialog(
-            onDismissRequest = { pendingAction = null },
-            title = { Text("Turn on automatic calories?") },
-            text = {
-                Text(
-                    "MealSnap needs an Anthropic API key to identify your food and count the calories " +
-                        "from the photo. Setting it up takes about a minute, once. " +
-                        "Without it you'd have to type the calories in yourself.",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { pendingAction = null; openSettings() }) { Text("Set up now") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingAction = null; action() }) { Text("Continue without") }
-            },
         )
     }
 }

@@ -29,6 +29,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -50,25 +51,26 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil3.compose.AsyncImage
 import com.mealsnap.MealSnapApplication
+import com.mealsnap.ai.Alternative
 import com.mealsnap.ai.FoodItem
+import com.mealsnap.nutrition.FoodEntry
+import com.mealsnap.nutrition.NutritionDb
 import com.mealsnap.data.MealType
 import com.mealsnap.ui.components.FitCard
 import com.mealsnap.ui.components.formatKcal
 import com.mealsnap.ui.theme.extras
 import java.io.File
+import kotlin.math.roundToInt
 
 /** Everything the editor UI can ask for, so the UI itself stays stateless and previewable. */
 class EditorActions(
     val onClose: () -> Unit,
-    val onOpenSettings: () -> Unit,
     val onAnalyze: () -> Unit,
     val onSave: () -> Unit,
     val onDelete: () -> Unit,
@@ -79,6 +81,9 @@ class EditorActions(
     val onCarbs: (String) -> Unit,
     val onFat: (String) -> Unit,
     val onHint: (String) -> Unit,
+    val onSelectAlternative: (Alternative) -> Unit,
+    val onPickFood: (FoodEntry) -> Unit,
+    val onPortion: (Float) -> Unit,
 )
 
 @Composable
@@ -86,7 +91,6 @@ fun MealEditorScreen(
     mealId: Long,
     photo: String,
     onClose: () -> Unit,
-    onOpenSettings: () -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as MealSnapApplication
     val vm: MealEditorViewModel = viewModel(
@@ -95,13 +99,11 @@ fun MealEditorScreen(
     val state by vm.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(state.finished) { if (state.finished) onClose() }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onResume() }
 
     MealEditorContent(
         state = state,
         actions = EditorActions(
             onClose = onClose,
-            onOpenSettings = onOpenSettings,
             onAnalyze = vm::analyze,
             onSave = vm::save,
             onDelete = vm::delete,
@@ -112,6 +114,9 @@ fun MealEditorScreen(
             onCarbs = vm::setCarbs,
             onFat = vm::setFat,
             onHint = vm::setHint,
+            onSelectAlternative = vm::selectAlternative,
+            onPickFood = vm::pickFood,
+            onPortion = vm::setPortion,
         ),
     )
 }
@@ -178,11 +183,13 @@ fun MealEditorContent(state: EditorState, actions: EditorActions) {
                 )
             }
 
-            StatusCard(state, onRetry = actions.onAnalyze, onOpenSettings = actions.onOpenSettings)
+            StatusCard(state, onRetry = actions.onAnalyze)
 
             if (!state.busy) {
-                if (state.aiEstimated && state.calories.isNotBlank()) {
+                if (state.hasResult) {
                     ResultCard(state)
+                    if (state.alternatives.isNotEmpty()) AlternativesCard(state.alternatives, actions.onSelectAlternative)
+                    if (state.dish != null) PortionCard(state, actions.onPortion)
                     if (state.items.isNotEmpty()) ItemsCard(state.items)
                     if (state.visualCues.isNotEmpty() || state.notes.isNotBlank()) {
                         CuesCard(state.visualCues, state.notes)
@@ -212,7 +219,7 @@ fun MealEditorContent(state: EditorState, actions: EditorActions) {
 }
 
 @Composable
-private fun StatusCard(state: EditorState, onRetry: () -> Unit, onOpenSettings: () -> Unit) {
+private fun StatusCard(state: EditorState, onRetry: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     when (val status = state.status) {
         AnalysisStatus.Idle -> Unit
@@ -235,32 +242,12 @@ private fun StatusCard(state: EditorState, onRetry: () -> Unit, onOpenSettings: 
                         color = scheme.onPrimaryContainer,
                     )
                     Text(
-                        "Reading the photo and estimating portions. This takes a few seconds.",
+                        if (state.workingOn == "Claude") "Sending the photo to Claude. This takes a few seconds."
+                        else "Working it out on your phone. No internet or account needed.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = scheme.onPrimaryContainer,
                     )
                 }
-            }
-        }
-
-        AnalysisStatus.NoApiKey -> Surface(
-            shape = MaterialTheme.shapes.large,
-            color = scheme.primaryContainer,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Set up automatic calories",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = scheme.onPrimaryContainer,
-                )
-                Text(
-                    "To identify food and count calories from the photo, MealSnap needs an Anthropic API key. " +
-                        "It takes about a minute, once. Then every photo is logged for you.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onPrimaryContainer,
-                )
-                Button(onClick = onOpenSettings, shape = RoundedCornerShape(50)) { Text("Set up now") }
             }
         }
 
@@ -292,7 +279,8 @@ private fun StatusCard(state: EditorState, onRetry: () -> Unit, onOpenSettings: 
                     color = scheme.onPrimaryContainer,
                 )
                 Text(
-                    "${state.confidence.orEmpty().replaceFirstChar { it.uppercase() }} confidence. " +
+                    "By ${state.engine?.label ?: "the app"}. " +
+                        "${state.confidence.orEmpty().replaceFirstChar { it.uppercase() }} confidence. " +
                         "Estimates can be off, so adjust anything below if you know better.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = scheme.onPrimaryContainer,
@@ -436,8 +424,16 @@ private fun EditCard(state: EditorState, actions: EditorActions) {
                 onValueChange = actions.onName,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Dish name") },
+                supportingText = if (!state.hasResult) {
+                    { Text("Start typing and pick a food to fill in the calories for you") }
+                } else null,
                 singleLine = true,
             )
+
+            if (!state.hasResult) {
+                val suggestions = remember(state.name) { NutritionDb.search(state.name, limit = 5) }
+                suggestions.forEach { food -> FoodSuggestion(food, onClick = { actions.onPickFood(food) }) }
+            }
 
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MealType.entries.forEach { type ->
@@ -466,6 +462,87 @@ private fun EditCard(state: EditorState, actions: EditorActions) {
             }
         }
     }
+}
+
+@Composable
+private fun FoodSuggestion(food: FoodEntry, onClick: () -> Unit) {
+    val perServing = (food.kcal * food.servingG / 100).roundToInt()
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.background,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(food.name, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "${food.servingLabel} · about ${food.servingG} g",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text("${formatKcal(perServing)} kcal", style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+@Composable
+private fun AlternativesCard(alternatives: List<Alternative>, onSelect: (Alternative) -> Unit) {
+    FitCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Not right? It might be", style = MaterialTheme.typography.titleLarge)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                alternatives.forEach { alt ->
+                    SuggestionChip(onClick = { onSelect(alt) }, label = { Text(alt.label) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PortionCard(state: EditorState, onPortion: (Float) -> Unit) {
+    val dish = state.dish ?: return
+    val grams = dish.scaled(state.portionFactor).items.sumOf { it.grams }
+    FitCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Portion", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text(
+                    "about $grams g",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PortionFactors.forEach { factor ->
+                    FilterChip(
+                        selected = state.portionFactor == factor,
+                        onClick = { onPortion(factor) },
+                        label = { Text(portionLabel(factor)) },
+                    )
+                }
+            }
+            Text(
+                "Photos can't show how much food there is, so pick the size that matches your plate.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun portionLabel(factor: Float): String = when (factor) {
+    0.5f -> "½×"
+    0.75f -> "¾×"
+    1f -> "1×"
+    1.5f -> "1½×"
+    2f -> "2×"
+    else -> "${factor}×"
 }
 
 @Composable

@@ -51,21 +51,17 @@ fun TodayScreen(
     onTakePhoto: () -> Unit,
     onUploadPhoto: () -> Unit,
     onManual: () -> Unit,
-    onOpenSettings: () -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as MealSnapApplication
     val vm: TodayViewModel = viewModel(factory = viewModelFactory { initializer { TodayViewModel(app.container) } })
     val state by vm.state.collectAsStateWithLifecycle()
-    val storedKey by app.container.settings.apiKey.collectAsStateWithLifecycle(initialValue = null)
 
     TodayContent(
         state = state,
-        keyMissing = storedKey?.isBlank() == true,
         onOpenMeal = onOpenMeal,
         onTakePhoto = onTakePhoto,
         onUploadPhoto = onUploadPhoto,
         onManual = onManual,
-        onOpenSettings = onOpenSettings,
     )
 }
 
@@ -73,12 +69,10 @@ fun TodayScreen(
 @Composable
 fun TodayContent(
     state: TodayUiState,
-    keyMissing: Boolean,
     onOpenMeal: (Long) -> Unit,
     onTakePhoto: () -> Unit,
     onUploadPhoto: () -> Unit,
     onManual: () -> Unit,
-    onOpenSettings: () -> Unit,
 ) {
     val extras = MaterialTheme.extras
     val targets = DayStats.macroTargets(state.goal)
@@ -96,10 +90,6 @@ fun TodayContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
-
-        if (keyMissing) {
-            item { SetupBanner(onOpenSettings) }
         }
 
         item { CalorieHero(consumed = state.calories, goal = state.goal) }
@@ -130,30 +120,6 @@ fun TodayContent(
 }
 
 @Composable
-private fun SetupBanner(onOpenSettings: () -> Unit) {
-    Surface(
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.primaryContainer,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                "Turn on automatic calories",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-            Text(
-                "Add an Anthropic API key (about a minute, once) and every photo is identified, " +
-                    "counted and logged for you.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-            Button(onClick = onOpenSettings, shape = RoundedCornerShape(50)) { Text("Set up now") }
-        }
-    }
-}
-
-@Composable
 private fun EmptyCard(onTakePhoto: () -> Unit, onUploadPhoto: () -> Unit, onManual: () -> Unit) {
     FitCard(Modifier.fillMaxWidth()) {
         Column(
@@ -174,7 +140,7 @@ private fun EmptyCard(onTakePhoto: () -> Unit, onUploadPhoto: () -> Unit, onManu
             Text("Log your first meal", style = MaterialTheme.typography.titleLarge)
             Text(
                 "Take a photo of your plate before you eat, or upload one you already have. " +
-                    "MealSnap names the dish and counts the calories.",
+                    "MealSnap names the dish and counts the calories, right on your phone.",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

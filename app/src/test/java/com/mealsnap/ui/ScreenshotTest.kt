@@ -70,7 +70,7 @@ class ScreenshotTest {
         ),
     )
 
-    private val editorActions = EditorActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    private val editorActions = EditorActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 
     private val aiState = EditorState(
         loading = false, isSaved = true, dirty = false,
@@ -132,21 +132,21 @@ class ScreenshotTest {
     @Test
     fun todayWithMeals() = shot("01_today") {
         WithChrome(Routes.TODAY) {
-            TodayContent(todayState(sampleMeals), false, {}, {}, {}, {}, {})
+            TodayContent(todayState(sampleMeals), {}, {}, {}, {})
         }
     }
 
     @Test
     fun todayWithMealsDark() = shot("02_today_dark", dark = true) {
         WithChrome(Routes.TODAY) {
-            TodayContent(todayState(sampleMeals), false, {}, {}, {}, {}, {})
+            TodayContent(todayState(sampleMeals), {}, {}, {}, {})
         }
     }
 
     @Test
-    fun todayEmptyNeedsSetup() = shot("03_today_empty_setup") {
+    fun todayEmpty() = shot("03_today_empty") {
         WithChrome(Routes.TODAY) {
-            TodayContent(todayState(emptyList()), true, {}, {}, {}, {}, {})
+            TodayContent(todayState(emptyList()), {}, {}, {}, {})
         }
     }
 
@@ -183,9 +183,40 @@ class ScreenshotTest {
     }
 
     @Test
-    fun editorNeedsApiKey() = shot("07_editor_no_key") {
+    @Config(sdk = [35], qualifiers = "w412dp-h1900dp-xxhdpi")
+    fun editorRecognisedOnPhone() = shot("07_editor_on_device") {
+        val burger = com.mealsnap.nutrition.NutritionDb.byName("Hamburger")!!
+        val cheese = com.mealsnap.nutrition.NutritionDb.byName("Cheeseburger")!!
+        val veggie = com.mealsnap.nutrition.NutritionDb.byName("Veggie burger")!!
+        val dish = com.mealsnap.nutrition.Dish.single(burger, name = "Hamburger")
+        val analysis = dish.toAnalysis(
+            "medium",
+            "Recognised as “Hamburger” (52% sure). Calories assume 1 burger of Hamburger (about 180 g); change the portion if yours differs.",
+            listOf("“Hamburger” 52%", "“Cheeseburger” 30%", "“Veggie burger” 7%"),
+        )
         MealEditorContent(
-            EditorState(loading = false, status = AnalysisStatus.NoApiKey, mealType = MealType.DINNER),
+            EditorState(
+                loading = false, isSaved = true, mealType = MealType.LUNCH, name = analysis.dishName,
+                calories = analysis.totalCalories.toString(), protein = analysis.proteinG.toString(),
+                carbs = analysis.carbsG.toString(), fat = analysis.fatG.toString(), fiberG = analysis.fiberG,
+                sugarG = analysis.sugarG, sodiumMg = analysis.sodiumMg, notes = analysis.notes,
+                items = analysis.items, visualCues = analysis.visualCues, confidence = "medium", aiEstimated = true,
+                engine = com.mealsnap.ai.Engine.CLASSIFIER, dish = dish, portionFactor = 1f,
+                alternatives = listOf(
+                    com.mealsnap.ai.Alternative("Cheeseburger", cheese),
+                    com.mealsnap.ai.Alternative("Veggie burger", veggie),
+                ),
+                status = AnalysisStatus.Done,
+            ),
+            editorActions,
+        )
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w412dp-h1300dp-xxhdpi")
+    fun editorManualWithSuggestions() = shot("10_editor_manual_search") {
+        MealEditorContent(
+            EditorState(loading = false, mealType = MealType.DINNER, name = "biry"),
             editorActions,
         )
     }

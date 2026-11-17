@@ -16,8 +16,16 @@ android {
         applicationId = "com.mealsnap"
         minSdk = 31 // Pixel 9 Pro ships with Android 15+, so Android 12+ is plenty
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
+
+        // Pixel phones are arm64; leaving the other CPU types out keeps the APK much smaller.
+        ndk { abiFilters += "arm64-v8a" }
+    }
+
+    androidResources {
+        // The food model is memory-mapped straight from the APK, so it must not be compressed.
+        noCompress += "tflite"
     }
 
     // A fixed debug keystore (committed on purpose, it is the standard public "android"
@@ -113,7 +121,11 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
-    // Official Anthropic SDK (Java, usable from Kotlin) for the photo -> calories call
+    // On-device food recognition (no account, key or internet needed)
+    implementation(libs.litert)
+    implementation(libs.mlkit.genai.prompt) // optional Gemini Nano, used only where the phone supports it
+
+    // Optional: Claude, used only if the person adds their own API key in Settings
     implementation(libs.anthropic.java)
 
     testImplementation(libs.junit)

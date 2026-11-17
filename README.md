@@ -2,42 +2,57 @@
 
 A calorie tracker for Android (built for a Pixel 9 Pro) where logging a meal is just a photo.
 Snap your plate before you eat. MealSnap works out what the dish is, how much of it there is and
-how many calories it has, and logs all of it for you. No typing.
+how many calories it has, and logs all of it for you. **It runs entirely on your phone: no account,
+no API key, no subscription and no internet needed.**
 
 <p>
   <img src="docs/screenshots/today.png" width="24%" alt="Today screen with calorie ring and food log">
-  <img src="docs/screenshots/meal-details.png" width="24%" alt="A logged meal with dish name, macros, ingredients and how it was estimated">
+  <img src="docs/screenshots/meal-details.png" width="24%" alt="A recognised meal with alternatives, portion chips and breakdown">
   <img src="docs/screenshots/trends.png" width="24%" alt="Weekly trends and daily log">
-  <img src="docs/screenshots/settings.png" width="24%" alt="Settings with the three-step API key setup">
+  <img src="docs/screenshots/settings.png" width="24%" alt="Settings showing on-device food recognition">
 </p>
 
 ## How it works
 
-1. Tap **Add meal** on the Today screen and choose **Take a photo** (opens the Pixel camera) or
-   **Upload a photo** (pick any picture already on the phone). **Enter manually** is there too.
-2. The photo goes to Claude, which identifies the dish and returns:
-   - the **dish name** and cuisine,
-   - every **ingredient/item** with an estimated **portion**, calories and protein/carbs/fat,
-   - totals including **fibre, sugar and sodium**,
-   - the **visual cues** it used (plate size, cutlery for scale, sauce, …) and a confidence level.
-3. The meal is **logged automatically** to Today. Open it any time to see the full breakdown, correct
-   anything, or tell the AI what it missed ("half portion, oat milk") and re-estimate.
+1. Tap **Add meal** and choose **Take a photo** (opens the Pixel camera), **Upload a photo** (any picture
+   already on the phone) or **Enter manually**.
+2. The photo is recognised **on the phone**:
+   - Google's food classifier (about 2,000 dishes, runs offline) names the dish.
+   - A built-in nutrition table turns the dish and a typical serving into calories, protein, carbs, fat,
+     fibre, sugar and sodium.
+   - The most likely alternatives appear as chips ("Not right? It might be Cheeseburger"), and
+     **portion chips** (½×, ¾×, 1×, 1½×, 2×) rescale everything, because a photo can't tell how much food there is.
+3. The meal is **logged automatically** to Today, and you can open it any time to see the full breakdown
+   or correct it.
 4. **Today** shows a calorie ring against your goal, macro rings and a food log grouped by meal.
    **Trends** shows the last 7 days and every earlier day.
+
+If a dish isn't recognised, type its name: matching foods from the table appear as you type, and
+picking one fills in the calories, so you never have to look numbers up.
 
 The look is inspired by the Fitbit app: teal activity rings, white rounded cards on a soft grey
 canvas, a pill navigation bar, with light and dark themes.
 
-## Set up automatic calories (once, about a minute)
+## What it can and can't do (please read)
 
-Recognising food from a photo needs an AI model, so MealSnap uses your own Anthropic API key.
-Until a key is added, photos can't be analysed and you'd have to type calories in by hand, so the app
-asks you to set it up the first time you add a photo.
+- Calories are **estimates**: a typical serving of the recognised dish. Adjust the portion chips to match
+  your plate. Mixed plates with several dishes are reduced to the single most likely dish unless your phone
+  supports the optional Gemini Nano mode below.
+- The food model knows about 2,000 dishes but not everything. For example it has no plain *dosa*, *naan* or
+  *roti* label; for those, type the name and pick it from the list. The table has about 230 common foods,
+  including many Indian, Asian, Middle Eastern and Western dishes. Anything outside it gets a generic plate
+  marked "low confidence".
+- Recognition quality depends on the photo: good light, the dish filling the frame, top-down or
+  slightly angled.
 
-1. In **Settings**, tap **Open Anthropic Console**, sign in, add a few dollars of credit under
-   Billing (API access is billed separately from a Claude.ai subscription) and create a key.
-2. Copy the key, return to MealSnap and tap **Paste from clipboard**.
-3. Tap **Save and test**. It confirms the key works before you rely on it.
+## Optional extras (never required)
+
+- **Gemini Nano (Pixel AI):** if your phone supports it, Settings shows a one-time download. It can read a
+  whole plate, name each item and guess its weight. It is checked at run time and silently skipped if the
+  phone doesn't support it.
+- **Claude:** if you already have an Anthropic API key you can add it in Settings for a more detailed
+  breakdown of mixed plates (about 1 to 2 US cents per photo, billed by Anthropic). Leave it empty to
+  stay fully on-device.
 
 ## Install on your Pixel
 
@@ -49,14 +64,11 @@ asks you to set it up the first time you add a photo.
 
 Every build is signed with the same key, so a newer APK installs over the old one and keeps your meals.
 
-## Cost and privacy
+## Privacy
 
-- Each photo is one Claude API request (a downscaled ~1568 px JPEG plus a short prompt), roughly a cent
-  or two on the default model. Settings lets you switch to Sonnet or Haiku to make it cheaper.
-- Photos and the meal log are stored only on the phone (app-private storage). A photo leaves the
-  phone only when it is sent to Anthropic for analysis. Your API key is stored in the app's private
-  settings and excluded from Android backups.
-- Calorie numbers from a photo are estimates. Treat them as a guide, not a measurement.
+Photos and the meal log are stored only on the phone (app-private storage), and recognition happens on
+the phone. A photo leaves the device only if you add a Claude API key, in which case it is sent to Anthropic
+for analysis. Any key you add is stored in the app's private settings and excluded from Android backups.
 
 ## Build it yourself
 
@@ -74,10 +86,12 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 |------|--------|
 | UI | Kotlin, Jetpack Compose, Material 3 with a custom Fitbit-inspired theme |
 | Camera / upload | System camera (`TakePicture`, no camera permission needed) and the Android photo picker |
+| Recognition | Bundled AIY food classifier (TFLite, 192 px, quantised) run with LiteRT; optional Gemini Nano via the ML Kit GenAI Prompt API; optional Claude via the Anthropic Java SDK |
+| Nutrition | Built-in table of about 230 foods per 100 g plus typical servings; every row is unit-tested for calorie/macro consistency |
 | Storage | Room (meals, with a tested 1 to 2 migration), private files (photos), DataStore (settings) |
-| AI | Official Anthropic Java SDK, structured JSON output, default model `claude-opus-5-5` at low effort, with server-side refusal fallback enabled |
-| Tests | Unit tests for parsing, request shape, day maths and the DB schema; Robolectric screenshot tests render every screen |
-| Min Android | 12 (API 31), targets API 36 |
+| Tests | Parsing, matching, request shape, day maths, DB schema; Robolectric screenshot tests render every screen |
+| Min Android | 12 (API 31), arm64 devices, targets API 36 |
 
-`app/debug.keystore` is the standard public Android debug key, committed on purpose so that every
-build (local or CI) is signed identically. This is a sideloaded personal app; it is not set up for Play Store release.
+See [NOTICE.md](NOTICE.md) for third-party licences. `app/debug.keystore` is the standard public Android
+debug key, committed on purpose so that every build (local or CI) is signed identically. This is a
+sideloaded personal app; it is not set up for Play Store release.

@@ -4,11 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mealsnap.AppContainer
 import com.mealsnap.ai.AnalysisException
+import com.mealsnap.ai.Alternative
+import com.mealsnap.ai.Engine
 import com.mealsnap.ai.FoodItem
 import com.mealsnap.ai.FoodItems
+import com.mealsnap.ai.Recognition
 import com.mealsnap.data.DayStats
 import com.mealsnap.data.Meal
 import com.mealsnap.data.MealType
+import com.mealsnap.nutrition.Dish
+import com.mealsnap.nutrition.FoodEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,10 +30,12 @@ sealed interface AnalysisStatus {
     data object Idle : AnalysisStatus
     data object Preparing : AnalysisStatus
     data object Analyzing : AnalysisStatus
-    data object NoApiKey : AnalysisStatus
     data class Failed(val message: String) : AnalysisStatus
     data object Done : AnalysisStatus
 }
+
+/** Portion multipliers offered for foods that come from the built-in nutrition table. */
+val PortionFactors = listOf(0.5f, 0.75f, 1f, 1.5f, 2f)
 
 data class EditorState(
     val loading: Boolean = true,
@@ -53,6 +60,15 @@ data class EditorState(
     val hint: String = "",
     val confidence: String? = null,
     val aiEstimated: Boolean = false,
+    /** Who identified the food (null for meals typed in or opened from the log). */
+    val engine: Engine? = null,
+    /** The recognised dish at 1x portion, when its numbers come from the built-in table. */
+    val dish: Dish? = null,
+    val portionFactor: Float = 1f,
+    /** Other dishes the photo might show, for one-tap correction. */
+    val alternatives: List<Alternative> = emptyList(),
+    /** Shown while analysing: where the work happens ("your phone" or "Claude"). */
+    val workingOn: String = "your phone",
     val status: AnalysisStatus = AnalysisStatus.Idle,
     val finished: Boolean = false,
 ) {
@@ -64,14 +80,18 @@ data class EditorState(
 
     val canReanalyze: Boolean
         get() = photoPath != null && !busy
+
+    /** True when there is a recognised or looked-up result to show in detail. */
+    val hasResult: Boolean
+        get() = (aiEstimated || dish != null) && calories.isNotBlank()
 }
 
 /**
- * Drives both "new meal from a photo" ([mealId] < 0, [capturePath] set), "new manual meal"
+ * Drives "new meal from a photo" ([mealId] < 0, [capturePath] set), "new manual meal"
  * ([mealId] < 0, blank [capturePath]) and "view / edit an existing meal" ([mealId] >= 0).
  *
- * For a new photo the analysis starts immediately and, when it succeeds, the meal is logged
- * automatically (unless the user turned auto-logging off).
+ * For a new photo the food is identified straight away (on the phone, no key needed) and the meal is
+ * logged automatically unless the user turned auto-logging off.
  */
 class MealEditorViewModel(
     private val container: AppContainer,
@@ -156,60 +176,138 @@ class MealEditorViewModel(
         analyze()
     }
 
-    /** Re-checks for a newly entered API key when coming back from Settings. */
-    fun onResume() {
-        if (_state.value.status == AnalysisStatus.NoApiKey) analyze()
-    }
-
     fun analyze() {
         val photo = _state.value.photoPath ?: return
         analysisJob?.cancel()
         analysisJob = viewModelScope.launch {
-            val apiKey = container.settings.apiKey.first()
-            if (apiKey.isBlank()) {
-                _state.update { it.copy(status = AnalysisStatus.NoApiKey) }
-                return@launch
+            val usesClaude = container.settings.apiKey.first().isNotBlank()
+            _state.update {
+                it.copy(status = AnalysisStatus.Analyzing, workingOn = if (usesClaude) "Claude" else "your phone")
             }
-            val model = container.settings.model.first()
-            _state.update { it.copy(status = AnalysisStatus.Analyzing) }
             try {
                 val bytes = withContext(Dispatchers.IO) { File(photo).readBytes() }
-                val result = container.analyzer.analyze(apiKey, model.id, bytes, _state.value.hint)
-                if (!result.isFood) {
-                    _state.update {
-                        it.copy(
-                            status = AnalysisStatus.Failed(
-                                "That doesn't look like food. Add a description and re-estimate, or enter it by hand.",
-                            ),
-                        )
-                    }
-                    return@launch
-                }
-                _state.update { s ->
-                    s.copy(
-                        name = result.dishName.ifBlank { s.name.ifBlank { "Meal" } },
-                        cuisine = result.cuisine,
-                        calories = result.totalCalories.toString(),
-                        protein = result.proteinG.toString(),
-                        carbs = result.carbsG.toString(),
-                        fat = result.fatG.toString(),
-                        fiberG = result.fiberG,
-                        sugarG = result.sugarG,
-                        sodiumMg = result.sodiumMg,
-                        notes = result.notes,
-                        items = result.items,
-                        visualCues = result.visualCues,
-                        confidence = result.confidence,
-                        aiEstimated = true,
-                        status = AnalysisStatus.Done,
-                        dirty = true,
-                    )
-                }
+                val recognition = container.recognizer.recognize(bytes, _state.value.hint)
+                applyRecognition(recognition)
                 if (container.settings.autoLog.first()) persist()
             } catch (e: AnalysisException) {
                 _state.update { it.copy(status = AnalysisStatus.Failed(e.message ?: "Something went wrong.")) }
             }
         }
+    }
+
+    private fun applyRecognition(rec: Recognition) {
+        val a = rec.analysis
+        _state.update { s ->
+            s.copy(
+                name = a.dishName.ifBlank { s.name.ifBlank { "Meal" } },
+                cuisine = a.cuisine,
+                calories = a.totalCalories.toString(),
+                protein = a.proteinG.toString(),
+                carbs = a.carbsG.toString(),
+                fat = a.fatG.toString(),
+                fiberG = a.fiberG,
+                sugarG = a.sugarG,
+                sodiumMg = a.sodiumMg,
+                notes = a.notes,
+                items = a.items,
+                visualCues = a.visualCues,
+                confidence = a.confidence,
+                aiEstimated = true,
+                engine = rec.engine,
+                dish = rec.dish,
+                portionFactor = 1f,
+                alternatives = rec.alternatives,
+                status = AnalysisStatus.Done,
+                dirty = true,
+            )
+        }
+    }
+
+    /** Rescales a table-based result to a bigger or smaller portion. */
+    fun setPortion(factor: Float) {
+        val s = _state.value
+        val dish = s.dish ?: return
+        val a = dish.scaled(factor).toAnalysis(s.confidence ?: "medium", s.notes, s.visualCues)
+        _state.update {
+            it.copy(
+                portionFactor = factor,
+                calories = a.totalCalories.toString(),
+                protein = a.proteinG.toString(),
+                carbs = a.carbsG.toString(),
+                fat = a.fatG.toString(),
+                fiberG = a.fiberG,
+                sugarG = a.sugarG,
+                sodiumMg = a.sodiumMg,
+                items = a.items,
+                dirty = true,
+            )
+        }
+        persistIfAlreadyLogged()
+    }
+
+    /** One-tap correction: "it's actually the cheeseburger". */
+    fun selectAlternative(alternative: Alternative) {
+        val s = _state.value
+        val previous = s.dish?.let { d ->
+            d.items.singleOrNull()?.let { Alternative(d.name, it.entry) }
+        }
+        val dish = Dish.single(alternative.entry, name = alternative.label)
+        val notes = "Changed to “${alternative.label}”. Calories assume ${alternative.entry.servingLabel} of " +
+            "${alternative.entry.name} (about ${alternative.entry.servingG} g); change the portion if yours differs."
+        val a = dish.toAnalysis(s.confidence ?: "medium", notes, s.visualCues)
+        _state.update {
+            it.copy(
+                name = alternative.label,
+                calories = a.totalCalories.toString(),
+                protein = a.proteinG.toString(),
+                carbs = a.carbsG.toString(),
+                fat = a.fatG.toString(),
+                fiberG = a.fiberG,
+                sugarG = a.sugarG,
+                sodiumMg = a.sodiumMg,
+                notes = notes,
+                items = a.items,
+                dish = dish,
+                portionFactor = 1f,
+                alternatives = (it.alternatives.filter { alt -> alt != alternative } + listOfNotNull(previous)).take(3),
+                dirty = true,
+            )
+        }
+        persistIfAlreadyLogged()
+    }
+
+    /** Fills the form from a food picked in the search suggestions. */
+    fun pickFood(entry: FoodEntry) {
+        val dish = Dish.single(entry)
+        val notes = "From the built-in food table: ${entry.servingLabel} of ${entry.name} (about ${entry.servingG} g). " +
+            "Change the portion if yours differs."
+        val a = dish.toAnalysis("medium", notes)
+        _state.update {
+            it.copy(
+                name = entry.name,
+                cuisine = "",
+                calories = a.totalCalories.toString(),
+                protein = a.proteinG.toString(),
+                carbs = a.carbsG.toString(),
+                fat = a.fatG.toString(),
+                fiberG = a.fiberG,
+                sugarG = a.sugarG,
+                sodiumMg = a.sodiumMg,
+                notes = notes,
+                items = a.items,
+                visualCues = emptyList(),
+                confidence = "medium",
+                engine = Engine.DATABASE,
+                dish = dish,
+                portionFactor = 1f,
+                alternatives = emptyList(),
+                dirty = true,
+            )
+        }
+    }
+
+    private fun persistIfAlreadyLogged() {
+        if (_state.value.isSaved) viewModelScope.launch { if (container.settings.autoLog.first()) persist() }
     }
 
     fun setName(value: String) = _state.update { it.copy(name = value, dirty = true) }
