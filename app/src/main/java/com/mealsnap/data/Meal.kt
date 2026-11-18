@@ -1,5 +1,6 @@
 package com.mealsnap.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -23,6 +24,7 @@ data class Meal(
     val createdAt: Long,
     /** [MealType] name. */
     val mealType: String,
+    /** The dish name, e.g. "Chicken tikka masala with rice". */
     val name: String,
     val calories: Int,
     val proteinG: Int = 0,
@@ -36,6 +38,13 @@ data class Meal(
     /** "high" / "medium" / "low" when the numbers came from the AI. */
     val confidence: String? = null,
     val aiEstimated: Boolean = false,
+    // Added in database version 2
+    @ColumnInfo(defaultValue = "0") val fiberG: Int = 0,
+    @ColumnInfo(defaultValue = "0") val sugarG: Int = 0,
+    @ColumnInfo(defaultValue = "0") val sodiumMg: Int = 0,
+    @ColumnInfo(defaultValue = "''") val cuisine: String = "",
+    /** What in the photo the AI used to judge the food and portions, one per line. */
+    @ColumnInfo(defaultValue = "''") val visualCues: String = "",
 ) {
     val type: MealType get() = MealType.fromName(mealType)
 }

@@ -16,8 +16,16 @@ android {
         applicationId = "com.mealsnap"
         minSdk = 31 // Pixel 9 Pro ships with Android 15+, so Android 12+ is plenty
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 5
+        versionName = "1.4"
+
+        // Pixel phones are arm64; leaving the other CPU types out keeps the APK much smaller.
+        ndk { abiFilters += "arm64-v8a" }
+    }
+
+    androidResources {
+        // The food model is memory-mapped straight from the APK, so it must not be compressed.
+        noCompress += "tflite"
     }
 
     // A fixed debug keystore (committed on purpose, it is the standard public "android"
@@ -61,7 +69,11 @@ android {
     }
 
     testOptions {
-        unitTests.isReturnDefaultValues = true
+        unitTests {
+            isReturnDefaultValues = true
+            // Needed so Robolectric can render the real Compose screens in the screenshot tests
+            isIncludeAndroidResources = true
+        }
     }
 }
 
@@ -75,6 +87,15 @@ ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 
+// Optional: run Robolectric from a folder of pre-downloaded android-all jars (offline machines):
+//   ./gradlew testDebugUnitTest -ProbolectricDependencyDir=/path/to/jars
+tasks.withType<Test>().configureEach {
+    providers.gradleProperty("robolectricDependencyDir").orNull?.let { dir ->
+        systemProperty("robolectric.offline", "true")
+        systemProperty("robolectric.dependency.dir", dir)
+    }
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -82,6 +103,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.icons.core)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -99,9 +121,19 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
-    // Official Anthropic SDK (Java, usable from Kotlin) for the photo -> calories call
+    // On-device food recognition (no account, key or internet needed)
+    implementation(libs.litert)
+    implementation(libs.mlkit.genai.prompt) // optional Gemini Nano, used only where the phone supports it
+
+    // Reads steps, heart rate, sleep and weight that a tracker such as the Fitbit Air shares with the phone
+    implementation(libs.androidx.health.connect)
+
+    // Optional: Claude, used only if the person adds their own API key in Settings
     implementation(libs.anthropic.java)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
 }

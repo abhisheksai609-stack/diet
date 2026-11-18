@@ -1,0 +1,31 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\n  \"summary\": \"You have consumed 1240 kcal and reached 4200 steps so far today. Your weight has dropped to 84 kg, showing steady progress toward your 78 kg goal.\",\n  \"tips\": [\n    {\n      \"title\": \"Calorie Budget Remaining\",\n      \"body\": \"You have 1010 kcal and 99 g of protein left from your 2250 kcal target, giving you plenty of room for a great dinner.\",\n      \"kind\": \"good\"\n    },\n    {\n      \"title\": \"Catch Up on Sleep\",\n      \"body\": \"You slept only 5 hours and 40 minutes last night, which is lower than your recent weekly average. Prioritize rest tonight.\",\n      \"kind\": \"watch\"\n    },\n    {\n      \"title\": \"Step Count is Low\",\n      \"body\": \"You are currently at 4200 steps against your 10000 daily target, so try a light evening walk to close the gap safely.\",\n      \"kind\": \"info\"\n    }\n  ],\n  \"workout\": \"Since you slept only 5 hours and 40 minutes, skip high-intensity training and take a gentle 20-minute walk keeping your heart rate inside your zone 2 range of 110 to 128 bpm.\",\n  \"meal_idea\": \"Enjoy a portion of grilled chicken tikka with a side of mixed vegetable salad and a small portion of dal to fit your remaining 1010 calories and 99 g protein.\"\n}",
+            "thoughtSignature": "EokBCoYBAWkUfRPiXj4q2IKARl73eSyu3E0oXRFOVoeK4nhY15ujLYSJi1D09sk06DU38IIpNcWNRB7lONiK1bSgJix7XfDPlGJZbdPY3ymPgDmQvrgnvU1zfN1zzrCDdLd5CXcTz+84VV8QV4TD/VMnE7qNENN6kz7tctSa2rh1S/8uGOnxlQqGSRA="
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 1015,
+    "candidatesTokenCount": 352,
+    "totalTokenCount": 1367,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 1015
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "99n8avXFLuDmytMPpJHN8QE"
+}

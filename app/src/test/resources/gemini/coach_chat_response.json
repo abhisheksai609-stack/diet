@@ -1,0 +1,31 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "You only got 5 hours 40 minutes of sleep last night, and your resting heart rate is up to 64 bpm compared to 57 earlier in the week. Since you are recovering on low sleep, listen to your body and consider a lighter workout or a rest day today, keeping any cardio in zone 2 between 110 and 128 bpm if you do train. \n\nYou have 1010 calories and 99 grams of protein left to reach your 2250 kcal and 151 g protein targets. Sticking with the Indian dishes you like, a grilled chicken tikka breast with a side of dal and a small portion of rice would hit those protein goals nicely without going over your remaining calories.\n\nAlso, if you ever experience chest pain, dizziness, fainting, or injuries, please see a doctor right away.",
+            "thoughtSignature": "EokBCoYBAWkUfRNAYbJvRHY+mkyjtfvCAtJZDny9I45e/0+96PAuPHhn/vG88TersQI8vHPWWaw0lnMGn2mvnHSfDwbCwk8BTkdz1EcyTtibUKvmclKfBQWkJvOsYxrtEq4e+L/dQ8DoQp/BCc8KOtgrdrxJmD+BOrt9k/9Okt9mdkl3fFfsFGiA3rs="
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 894,
+    "candidatesTokenCount": 182,
+    "totalTokenCount": 1076,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 894
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "-dn8auqhEtWEytMP6ZSZ6QM"
+}

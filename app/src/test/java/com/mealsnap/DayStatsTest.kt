@@ -79,6 +79,31 @@ class DayStatsTest {
     }
 
     @Test
+    fun macroTargetsSplitTheCalorieGoal() {
+        val targets = DayStats.macroTargets(2000)
+        assertEquals(125, targets.proteinG) // 25% / 4 kcal per g
+        assertEquals(225, targets.carbsG)   // 45% / 4 kcal per g
+        assertEquals(67, targets.fatG)      // 30% / 9 kcal per g
+    }
+
+    @Test
+    fun weeklyAverageIgnoresUnloggedDays() {
+        val today = LocalDate.of(2026, 11, 16)
+        val chart = (6 downTo 0).map { today.minusDays(it.toLong()) }
+            .zip(listOf(0, 1800, 0, 2200, 0, 0, 2000))
+        assertEquals(2000, DayStats.weeklyAverage(chart))
+        assertEquals(0, DayStats.weeklyAverage(chart.map { it.first to 0 }))
+    }
+
+    @Test
+    fun daysOnTargetCountsLoggedDaysAtOrUnderGoal() {
+        val today = LocalDate.of(2026, 11, 16)
+        val chart = (6 downTo 0).map { today.minusDays(it.toLong()) }
+            .zip(listOf(0, 1800, 2000, 2200, 0, 1999, 2001))
+        assertEquals(3, DayStats.daysOnTarget(chart, 2000)) // 1800, 2000, 1999
+    }
+
+    @Test
     fun mealTypeFollowsTimeOfDay() {
         assertEquals(MealType.BREAKFAST, DayStats.mealTypeForHour(8))
         assertEquals(MealType.LUNCH, DayStats.mealTypeForHour(13))

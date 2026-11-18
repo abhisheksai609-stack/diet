@@ -4,11 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mealsnap.AppContainer
 import com.mealsnap.ai.AnalysisException
+import com.mealsnap.ai.Alternative
+import com.mealsnap.ai.Engine
 import com.mealsnap.ai.FoodItem
 import com.mealsnap.ai.FoodItems
+import com.mealsnap.ai.Recognition
 import com.mealsnap.data.DayStats
 import com.mealsnap.data.Meal
 import com.mealsnap.data.MealType
+import com.mealsnap.nutrition.Dish
+import com.mealsnap.nutrition.FoodEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,30 +30,49 @@ sealed interface AnalysisStatus {
     data object Idle : AnalysisStatus
     data object Preparing : AnalysisStatus
     data object Analyzing : AnalysisStatus
-    data object NoApiKey : AnalysisStatus
     data class Failed(val message: String) : AnalysisStatus
-    data class Done(val confidence: String, val notes: String) : AnalysisStatus
+    data object Done : AnalysisStatus
 }
 
+/** Portion multipliers offered for foods that come from the built-in nutrition table. */
+val PortionFactors = listOf(0.5f, 0.75f, 1f, 1.5f, 2f)
+
 data class EditorState(
-    val isNew: Boolean = true,
     val loading: Boolean = true,
+    /** True once the meal exists in the log (auto-logged, saved, or opened from the log). */
+    val isSaved: Boolean = false,
+    /** True when fields were edited since the last save. */
+    val dirty: Boolean = false,
     val photoPath: String? = null,
     val name: String = "",
+    val cuisine: String = "",
     val mealType: MealType = MealType.SNACK,
     val calories: String = "",
     val protein: String = "",
     val carbs: String = "",
     val fat: String = "",
+    val fiberG: Int = 0,
+    val sugarG: Int = 0,
+    val sodiumMg: Int = 0,
     val notes: String = "",
     val items: List<FoodItem> = emptyList(),
+    val visualCues: List<String> = emptyList(),
     val hint: String = "",
     val confidence: String? = null,
     val aiEstimated: Boolean = false,
+    /** Who identified the food (null for meals typed in or opened from the log). */
+    val engine: Engine? = null,
+    /** The recognised dish at 1x portion, when its numbers come from the built-in table. */
+    val dish: Dish? = null,
+    val portionFactor: Float = 1f,
+    /** Other dishes the photo might show, for one-tap correction. */
+    val alternatives: List<Alternative> = emptyList(),
+    /** Shown while analysing: where the work happens ("your phone" or "Claude"). */
+    val workingOn: String = "your phone",
     val status: AnalysisStatus = AnalysisStatus.Idle,
     val finished: Boolean = false,
 ) {
-    private val busy: Boolean
+    val busy: Boolean
         get() = status == AnalysisStatus.Preparing || status == AnalysisStatus.Analyzing
 
     val canSave: Boolean
@@ -56,11 +80,18 @@ data class EditorState(
 
     val canReanalyze: Boolean
         get() = photoPath != null && !busy
+
+    /** True when there is a recognised or looked-up result to show in detail. */
+    val hasResult: Boolean
+        get() = (aiEstimated || dish != null) && calories.isNotBlank()
 }
 
 /**
- * Drives both "new meal from a photo" ([mealId] < 0, [capturePath] set) and
- * "edit an existing meal" ([mealId] >= 0).
+ * Drives "new meal from a photo" ([mealId] < 0, [capturePath] set), "new manual meal"
+ * ([mealId] < 0, blank [capturePath]) and "view / edit an existing meal" ([mealId] >= 0).
+ *
+ * For a new photo the food is identified straight away (on the phone, no key needed) and the meal is
+ * logged automatically unless the user turned auto-logging off.
  */
 class MealEditorViewModel(
     private val container: AppContainer,
@@ -68,7 +99,7 @@ class MealEditorViewModel(
     private val capturePath: String,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(EditorState(isNew = mealId < 0))
+    private val _state = MutableStateFlow(EditorState())
     val state: StateFlow<EditorState> = _state.asStateFlow()
 
     private val openedAt = System.currentTimeMillis()
@@ -79,7 +110,11 @@ class MealEditorViewModel(
 
     init {
         viewModelScope.launch {
-            if (mealId >= 0) loadExisting() else startNew()
+            when {
+                mealId >= 0 -> loadExisting()
+                capturePath.isBlank() -> startManual()
+                else -> startFromPhoto()
+            }
         }
     }
 
@@ -90,26 +125,38 @@ class MealEditorViewModel(
             return
         }
         existing = meal
+        saved = true
         _state.update {
             it.copy(
-                isNew = false,
                 loading = false,
+                isSaved = true,
                 photoPath = meal.photoPath,
                 name = meal.name,
+                cuisine = meal.cuisine,
                 mealType = meal.type,
                 calories = meal.calories.toString(),
                 protein = meal.proteinG.toString(),
                 carbs = meal.carbsG.toString(),
                 fat = meal.fatG.toString(),
+                fiberG = meal.fiberG,
+                sugarG = meal.sugarG,
+                sodiumMg = meal.sodiumMg,
                 notes = meal.notes,
                 items = FoodItems.decode(meal.itemsJson),
+                visualCues = meal.visualCues.lines().filter { line -> line.isNotBlank() },
                 confidence = meal.confidence,
                 aiEstimated = meal.aiEstimated,
             )
         }
     }
 
-    private suspend fun startNew() {
+    private fun startManual() {
+        _state.update {
+            it.copy(loading = false, mealType = DayStats.mealTypeForHour(LocalTime.now().hour))
+        }
+    }
+
+    private suspend fun startFromPhoto() {
         _state.update {
             it.copy(
                 loading = false,
@@ -133,76 +180,187 @@ class MealEditorViewModel(
         val photo = _state.value.photoPath ?: return
         analysisJob?.cancel()
         analysisJob = viewModelScope.launch {
-            val apiKey = container.settings.apiKey.first()
-            if (apiKey.isBlank()) {
-                _state.update { it.copy(status = AnalysisStatus.NoApiKey) }
-                return@launch
+            val workingOn = when {
+                container.settings.geminiKey.first().isNotBlank() -> "Google Gemini"
+                container.settings.apiKey.first().isNotBlank() -> "Claude"
+                else -> "your phone"
             }
-            val model = container.settings.model.first()
-            _state.update { it.copy(status = AnalysisStatus.Analyzing) }
+            _state.update { it.copy(status = AnalysisStatus.Analyzing, workingOn = workingOn) }
             try {
                 val bytes = withContext(Dispatchers.IO) { File(photo).readBytes() }
-                val result = container.analyzer.analyze(apiKey, model.id, bytes, _state.value.hint)
-                if (!result.isFood) {
-                    _state.update {
-                        it.copy(
-                            status = AnalysisStatus.Failed(
-                                "That doesn't look like food. Add a description and re-estimate, or enter it by hand.",
-                            ),
-                        )
-                    }
-                    return@launch
-                }
-                _state.update { s ->
-                    s.copy(
-                        name = result.mealName.ifBlank { s.name.ifBlank { "Meal" } },
-                        calories = result.totalCalories.toString(),
-                        protein = result.proteinG.toString(),
-                        carbs = result.carbsG.toString(),
-                        fat = result.fatG.toString(),
-                        notes = result.notes,
-                        items = result.items,
-                        confidence = result.confidence,
-                        aiEstimated = true,
-                        status = AnalysisStatus.Done(result.confidence, result.notes),
-                    )
-                }
+                val recognition = container.recognizer.recognize(bytes, _state.value.hint)
+                applyRecognition(recognition)
+                if (container.settings.autoLog.first()) persist()
             } catch (e: AnalysisException) {
                 _state.update { it.copy(status = AnalysisStatus.Failed(e.message ?: "Something went wrong.")) }
             }
         }
     }
 
-    fun setName(value: String) = _state.update { it.copy(name = value) }
-    fun setMealType(value: MealType) = _state.update { it.copy(mealType = value) }
-    fun setCalories(value: String) = _state.update { it.copy(calories = value) }
-    fun setProtein(value: String) = _state.update { it.copy(protein = value) }
-    fun setCarbs(value: String) = _state.update { it.copy(carbs = value) }
-    fun setFat(value: String) = _state.update { it.copy(fat = value) }
+    private fun applyRecognition(rec: Recognition) {
+        val a = rec.analysis
+        _state.update { s ->
+            s.copy(
+                name = a.dishName.ifBlank { s.name.ifBlank { "Meal" } },
+                cuisine = a.cuisine,
+                calories = a.totalCalories.toString(),
+                protein = a.proteinG.toString(),
+                carbs = a.carbsG.toString(),
+                fat = a.fatG.toString(),
+                fiberG = a.fiberG,
+                sugarG = a.sugarG,
+                sodiumMg = a.sodiumMg,
+                notes = a.notes,
+                items = a.items,
+                visualCues = a.visualCues,
+                confidence = a.confidence,
+                aiEstimated = true,
+                engine = rec.engine,
+                dish = rec.dish,
+                portionFactor = 1f,
+                alternatives = rec.alternatives,
+                status = AnalysisStatus.Done,
+                dirty = true,
+            )
+        }
+    }
+
+    /** Rescales a table-based result to a bigger or smaller portion. */
+    fun setPortion(factor: Float) {
+        val s = _state.value
+        val dish = s.dish ?: return
+        val a = dish.scaled(factor).toAnalysis(s.confidence ?: "medium", s.notes, s.visualCues)
+        _state.update {
+            it.copy(
+                portionFactor = factor,
+                calories = a.totalCalories.toString(),
+                protein = a.proteinG.toString(),
+                carbs = a.carbsG.toString(),
+                fat = a.fatG.toString(),
+                fiberG = a.fiberG,
+                sugarG = a.sugarG,
+                sodiumMg = a.sodiumMg,
+                items = a.items,
+                dirty = true,
+            )
+        }
+        persistIfAlreadyLogged()
+    }
+
+    /** One-tap correction: "it's actually the cheeseburger". */
+    fun selectAlternative(alternative: Alternative) {
+        val s = _state.value
+        val previous = s.dish?.let { d ->
+            d.items.singleOrNull()?.let { Alternative(d.name, it.entry) }
+        }
+        val dish = Dish.single(alternative.entry, name = alternative.label)
+        val notes = "Changed to “${alternative.label}”. Calories assume ${alternative.entry.servingLabel} of " +
+            "${alternative.entry.name} (about ${alternative.entry.servingG} g); change the portion if yours differs."
+        val a = dish.toAnalysis(s.confidence ?: "medium", notes, s.visualCues)
+        _state.update {
+            it.copy(
+                name = alternative.label,
+                calories = a.totalCalories.toString(),
+                protein = a.proteinG.toString(),
+                carbs = a.carbsG.toString(),
+                fat = a.fatG.toString(),
+                fiberG = a.fiberG,
+                sugarG = a.sugarG,
+                sodiumMg = a.sodiumMg,
+                notes = notes,
+                items = a.items,
+                dish = dish,
+                portionFactor = 1f,
+                alternatives = (it.alternatives.filter { alt -> alt != alternative } + listOfNotNull(previous)).take(3),
+                dirty = true,
+            )
+        }
+        persistIfAlreadyLogged()
+    }
+
+    /** Fills the form from a food picked in the search suggestions. */
+    fun pickFood(entry: FoodEntry) {
+        val dish = Dish.single(entry)
+        val notes = "From the built-in food table: ${entry.servingLabel} of ${entry.name} (about ${entry.servingG} g). " +
+            "Change the portion if yours differs."
+        val a = dish.toAnalysis("medium", notes)
+        _state.update {
+            it.copy(
+                name = entry.name,
+                cuisine = "",
+                calories = a.totalCalories.toString(),
+                protein = a.proteinG.toString(),
+                carbs = a.carbsG.toString(),
+                fat = a.fatG.toString(),
+                fiberG = a.fiberG,
+                sugarG = a.sugarG,
+                sodiumMg = a.sodiumMg,
+                notes = notes,
+                items = a.items,
+                visualCues = emptyList(),
+                confidence = "medium",
+                engine = Engine.DATABASE,
+                dish = dish,
+                portionFactor = 1f,
+                alternatives = emptyList(),
+                dirty = true,
+            )
+        }
+    }
+
+    private fun persistIfAlreadyLogged() {
+        if (_state.value.isSaved) viewModelScope.launch { if (container.settings.autoLog.first()) persist() }
+    }
+
+    fun setName(value: String) = _state.update { it.copy(name = value, dirty = true) }
+    fun setMealType(value: MealType) = _state.update { it.copy(mealType = value, dirty = true) }
+    fun setCalories(value: String) = _state.update { it.copy(calories = value, dirty = true) }
+    fun setProtein(value: String) = _state.update { it.copy(protein = value, dirty = true) }
+    fun setCarbs(value: String) = _state.update { it.copy(carbs = value, dirty = true) }
+    fun setFat(value: String) = _state.update { it.copy(fat = value, dirty = true) }
     fun setHint(value: String) = _state.update { it.copy(hint = value) }
 
-    fun save() {
+    /** Writes the current fields to the log (insert the first time, update after). */
+    private suspend fun persist(): Boolean {
         val s = _state.value
-        if (!s.canSave) return
+        val calories = s.calories.toIntOrNull() ?: return false
+        if (s.name.isBlank()) return false
+
+        val meal = Meal(
+            id = existing?.id ?: 0,
+            createdAt = existing?.createdAt ?: openedAt,
+            mealType = s.mealType.name,
+            name = s.name.trim(),
+            calories = calories,
+            proteinG = s.protein.toIntOrNull() ?: 0,
+            carbsG = s.carbs.toIntOrNull() ?: 0,
+            fatG = s.fat.toIntOrNull() ?: 0,
+            photoPath = s.photoPath,
+            itemsJson = FoodItems.encode(s.items),
+            notes = s.notes,
+            confidence = s.confidence,
+            aiEstimated = s.aiEstimated,
+            fiberG = s.fiberG,
+            sugarG = s.sugarG,
+            sodiumMg = s.sodiumMg,
+            cuisine = s.cuisine,
+            visualCues = s.visualCues.joinToString("\n"),
+        )
+        val id = if (existing == null) {
+            container.mealDao.insert(meal)
+        } else {
+            container.mealDao.update(meal)
+            meal.id
+        }
+        existing = meal.copy(id = id)
+        saved = true
+        _state.update { it.copy(isSaved = true, dirty = false) }
+        return true
+    }
+
+    fun save() {
         viewModelScope.launch {
-            val meal = Meal(
-                id = existing?.id ?: 0,
-                createdAt = existing?.createdAt ?: openedAt,
-                mealType = s.mealType.name,
-                name = s.name.trim(),
-                calories = s.calories.toInt(),
-                proteinG = s.protein.toIntOrNull() ?: 0,
-                carbsG = s.carbs.toIntOrNull() ?: 0,
-                fatG = s.fat.toIntOrNull() ?: 0,
-                photoPath = s.photoPath,
-                itemsJson = FoodItems.encode(s.items),
-                notes = s.notes,
-                confidence = s.confidence,
-                aiEstimated = s.aiEstimated,
-            )
-            if (existing == null) container.mealDao.insert(meal) else container.mealDao.update(meal)
-            saved = true
-            _state.update { it.copy(finished = true) }
+            if (persist()) _state.update { it.copy(finished = true) }
         }
     }
 
@@ -217,7 +375,7 @@ class MealEditorViewModel(
     }
 
     override fun onCleared() {
-        // Leaving a new meal without saving: don't leave its photo behind.
+        // Leaving a photo that never made it into the log: don't leave the file behind.
         if (!saved) container.photos.delete(ownedPhoto)
     }
 }
