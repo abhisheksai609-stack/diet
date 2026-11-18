@@ -143,3 +143,7 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 See [NOTICE.md](NOTICE.md) for third-party licences. `app/debug.keystore` is the standard public Android
 debug key, committed on purpose so that every build (local or CI) is signed identically. This is a
 sideloaded personal app; it is not set up for Play Store release.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Bundled third-party components keep their own licences, listed in [NOTICE.md](NOTICE.md).
